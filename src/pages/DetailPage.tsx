@@ -1,0 +1,378 @@
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRightLeft, CalendarClock, CalendarDays, ChevronDown, Eye, EyeOff, Search, X } from 'lucide-react';
+import { useData } from '../store/data';
+import { useSettings } from '../store/settings';
+import { useUI } from '../store/ui';
+import { dayKey, monthKey, weekdayLabel, monthLabelCN } from '../utils/date';
+import { toYuan } from '../utils/money';
+import { monthBills, sumByType, categoryTotals } from '../utils/stats';
+import { CatIcon } from '../utils/iconMap';
+import { repo } from '../db/repo';
+import { MonthPicker } from '../components/MonthPicker';
+import { EmptyState } from '../components/EmptyState';
+import { SyncChip } from '../components/SyncChip';
+import { Sheet } from '../components/Sheet';
+import { PhotoViewer } from '../components/PhotoViewer';
+import type { Bill, Category, Account } from '../types';
+import { useNavigate } from 'react-router-dom';
+import { isRecurringDue } from '../utils/recurring';
+
+export function DetailPage() {
+  const bills = useData((s) => s.bills);
+  const categories = useData((s) => s.categories);
+  const accounts = useData((s) => s.accounts);
+  const recurringBills = useData((s) => s.recurringBills);
+  const ledgers = useData((s) => s.ledgers);
+  const currentLedgerId = useData((s) => s.currentLedgerId);
+  const setCurrentLedger = useData((s) => s.setCurrentLedger);
+  const removeBill = useData((s) => s.removeBill);
+  const hide = useSettings((s) => s.hideAmount);
+  const colorAmounts = useSettings((s) => s.colorAmounts);
+  const setSettings = useSettings((s) => s.set);
+  const openEntry = useUI((s) => s.openEntry);
+  const confirm = useUI((s) => s.confirm);
+  const toast = useUI((s) => s.toast);
+  const navigate = useNavigate();
+
+  const [month, setMonth] = useState(() => monthKey(Date.now()));
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [filterCat, setFilterCat] = useState('');
+
+  const show = (cents: number) => (hide ? '****' : toYuan(cents));
+  const dueRecurringCount = useMemo(() => recurringBills.filter((x) => isRecurringDue(x)).length, [recurringBills]);
+
+  const monthBillList = useMemo(
+    () => monthBills(bills, currentLedgerId, month),
+    [bills, currentLedgerId, month],
+  );
+
+  // 分类 id → 对象索引，避免过滤/渲染时对每条账单做线性 find
+  const catMap = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  // 账户 id → 对象索引（账单行第二行显示支付账户）
+  const accMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+
+  const sums = useMemo(() => sumByType(monthBillList), [monthBillList]);
+
+  /** 当月出现过的分类（筛选 chips 用），按金额降序 */
+  const monthCats = useMemo(() => {
+    return Array.from(categoryTotals(monthBillList).entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([id, cents]) => ({ cat: catMap.get(id), cents }))
+      .filter((x): x is { cat: Category; cents: number } => !!x.cat);
+  }, [monthBillList, catMap]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim();
+    return monthBillList.filter((b) => {
+      if (filterCat && b.categoryId !== filterCat) return false;
+      if (!q) return true;
+      const cat = catMap.get(b.categoryId);
+      return b.note.includes(q) || (cat?.name ?? '').includes(q) || toYuan(b.amountCents).startsWith(q);
+    });
+  }, [monthBillList, query, filterCat, catMap]);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, Bill[]>();
+    for (const b of filtered) {
+      const k = dayKey(b.occurredAt);
+      const arr = map.get(k);
+      if (arr) arr.push(b);
+      else map.set(k, [b]);
+    }
+    // 组内：按记账先后倒序（后记的在上）；同毫秒再按账单时间倒序
+    for (const arr of map.values()) {
+      arr.sort((a, b) => b.createdAt - a.createdAt || b.occurredAt - a.occurredAt);
+    }
+    // 日期小计与标题文案在此一并算好：渲染体不再对每组做日期解析
+    return Array.from(map.entries())
+      .sort((a, b) => (a[0] > b[0] ? -1 : 1))
+      .map(([day, items]) => {
+        let dayIncome = 0;
+        let dayExpense = 0;
+        for (const b of items) {
+          if (b.kind === 'transfer') continue;
+          if (b.type === 'income') dayIncome += b.amountCents;
+          else dayExpense += b.amountCents;
+        }
+        const t = new Date(`${day}T12:00:00`).getTime();
+        return { day, items, dayIncome, dayExpense, dayLabel: `${day.slice(5).replace('-', '月')}日 ${weekdayLabel(t)}` };
+      });
+  }, [filtered]);
+
+  // 稳定回调：配合 memo(BillRow)，让搜索输入等父组件重渲不再逐行重渲账单列表
+  const onTap = useCallback((b: Bill) => openEntry(b), [openEntry]);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const onPreview = useCallback((url: string) => setPreviewUrl(url), []);
+  const closePreview = useCallback(() => setPreviewUrl(null), []);
+  const onDelete = useCallback(
+    async (b: Bill) => {
+      const ok = await confirm({ title: '删除这笔记录？', message: '删除后 30 天内可在 设置→数据恢复 中找回', confirmText: '删除', danger: true });
+      if (!ok) return;
+      await removeBill(b.id);
+      toast('已删除');
+    },
+    [confirm, removeBill, toast],
+  );
+
+  const curLedger = ledgers.find((l) => l.id === currentLedgerId);
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Header（浅色=品牌色，暗色=沉浸深色） */}
+      <header className="bg-header pt-safe">
+        <div className="px-4 pt-2 pb-3">
+          <div className="flex items-center justify-between">
+            <button className="flex items-center gap-0.5 text-sm font-medium" onClick={() => setLedgerOpen(true)}>
+              {curLedger?.name ?? '默认账本'}
+              <ChevronDown size={16} />
+            </button>
+            <h1 className="text-lg font-bold tracking-wide">我的账本</h1>
+            <div className="flex items-center gap-3">
+              <button aria-label="搜索" onClick={() => { setSearchOpen((v) => !v); setQuery(''); }}>
+                <Search size={20} />
+              </button>
+              <button aria-label="选择月份" onClick={() => setPickerOpen(true)}>
+                <CalendarDays size={20} />
+              </button>
+            </div>
+          </div>
+          <div className="flex items-end justify-between mt-3">
+            <button className="flex items-center gap-1" onClick={() => setPickerOpen(true)}>
+              <span className="text-3xl font-bold leading-none">{monthLabelCN(month)}</span>
+              <ChevronDown size={18} className="mb-0.5" />
+            </button>
+            <div className="flex items-center gap-2">
+              <SyncChip onClick={() => navigate('/settings/backup')} />
+              <button aria-label="隐藏金额" onClick={() => setSettings({ hideAmount: !hide })}>
+                {hide ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </div>
+          {/* 收入 / 支出 / 结余 三段式 */}
+          <div className="grid grid-cols-3 gap-2 mt-3">
+            <div className="rounded-xl bg-header-fill px-3 py-2">
+              <p className="text-[11px] text-header-fill-ink/70">收入</p>
+              <p className="text-base font-semibold text-header-fill-ink leading-tight">{show(sums.income)}</p>
+            </div>
+            <div className="rounded-xl bg-header-fill px-3 py-2">
+              <p className="text-[11px] text-header-fill-ink/70">支出</p>
+              <p className="text-base font-semibold text-header-fill-ink leading-tight">{show(sums.expense)}</p>
+            </div>
+            <div className="rounded-xl bg-header-fill px-3 py-2">
+              <p className="text-[11px] text-header-fill-ink/70">结余</p>
+              <p className={`text-base font-semibold leading-tight ${sums.balance < 0 ? 'text-danger' : 'text-header-fill-ink'}`}>
+                {sums.balance < 0 ? '-' : ''}
+                {show(Math.abs(sums.balance))}
+              </p>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {dueRecurringCount > 0 && (
+        <button className="mx-3 mt-2 rounded-xl bg-card border border-line px-4 py-3 flex items-center gap-3 text-left" onClick={() => navigate('/settings/recurring')}>
+          <span className="w-9 h-9 rounded-full bg-fill text-primary flex items-center justify-center"><CalendarClock size={18} /></span>
+          <span className="flex-1"><span className="block text-sm font-medium">有 {dueRecurringCount} 笔周期账单待确认</span><span className="block text-xs text-ink-3">确认后才会记入账单</span></span>
+          <ChevronDown size={16} className="text-ink-3 -rotate-90" />
+        </button>
+      )}
+
+      {/* 搜索栏 */}
+      {searchOpen && (
+        <div className="bg-header px-4 pb-3">
+          <div className="flex items-center gap-2 bg-header-fill text-header-fill-ink rounded-full px-3 h-9">
+            <Search size={16} className="text-ink-3" />
+            <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索备注 / 分类 / 金额" className="flex-1 text-sm outline-none bg-transparent" />
+            {query && (
+              <button onClick={() => setQuery('')} aria-label="清空">
+                <X size={16} className="text-ink-3" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 分类筛选 chips：搜索栏下方，与文本搜索叠加生效 */}
+      {monthCats.length > 1 && (
+        <div className="bg-surface border-b border-line">
+          <div className="flex gap-2 px-4 py-2 overflow-auto hide-scrollbar">
+            <button
+              className={`shrink-0 px-3 h-7 rounded-full text-xs ${!filterCat ? 'bg-ink text-surface font-medium' : 'bg-fill text-ink-2'}`}
+              onClick={() => setFilterCat('')}
+            >
+              全部
+            </button>
+            {monthCats.map(({ cat }) => (
+              <button
+                key={cat.id}
+                className={`shrink-0 flex items-center gap-1 px-3 h-7 rounded-full text-xs ${filterCat === cat.id ? 'bg-ink text-surface font-medium' : 'bg-fill text-ink-2'}`}
+                onClick={() => setFilterCat(filterCat === cat.id ? '' : cat.id)}
+              >
+                <CatIcon name={cat.icon} className="w-3.5 h-3.5" />
+                {cat.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 列表 */}
+      <main className="flex-1 overflow-auto bg-surface rounded-t-2xl -mt-2 relative pb-28">
+        {groups.length === 0 ? (
+          <EmptyState text={query ? '没有找到相关账单' : '开始记第一笔吧'} actionLabel={query ? undefined : '记一笔'} onAction={() => openEntry(null)} />
+        ) : (
+          groups.map(({ day, items, dayIncome, dayExpense, dayLabel }) => {
+            return (
+              <section key={day}>
+                <div className="flex justify-between px-4 py-2 text-xs text-ink-3">
+                  <span>{dayLabel}</span>
+                  <span>
+                    {dayIncome > 0 && `收入：${show(dayIncome)}`}
+                    {dayIncome > 0 && dayExpense > 0 && '  '}
+                    {dayExpense > 0 && `支出：${show(dayExpense)}`}
+                  </span>
+                </div>
+                <div className="bg-card">
+                  {items.map((b) => (
+                    <BillRow key={b.id} bill={b} hide={hide} color={colorAmounts} onTap={onTap} onDelete={onDelete} onPreview={onPreview} cat={catMap.get(b.categoryId)} account={b.accountId ? accMap.get(b.accountId) : undefined} toAccount={b.toAccountId ? accMap.get(b.toAccountId) : undefined} />
+                  ))}
+                </div>
+              </section>
+            );
+          })
+        )}
+      </main>
+
+      <MonthPicker open={pickerOpen} value={month} onChange={setMonth} onClose={() => setPickerOpen(false)} />
+
+      {previewUrl && <PhotoViewer url={previewUrl} onClose={closePreview} />}
+
+      <Sheet open={ledgerOpen} onClose={() => setLedgerOpen(false)} title="切换账本">
+        <div className="px-4 pb-6 space-y-2">
+          {ledgers.map((l) => (
+            <button
+              key={l.id}
+              className={`w-full h-11 rounded-xl text-sm ${l.id === currentLedgerId ? 'bg-primary text-on-primary font-medium' : 'bg-fill text-ink-2'}`}
+              onClick={() => {
+                setCurrentLedger(l.id);
+                setLedgerOpen(false);
+              }}
+            >
+              {l.name}
+            </button>
+          ))}
+          <button className="w-full h-11 rounded-xl text-sm text-ink-3 bg-surface" onClick={() => { setLedgerOpen(false); navigate('/settings/ledgers'); }}>
+            管理账本
+          </button>
+        </div>
+      </Sheet>
+    </div>
+  );
+}
+
+const BillRow = memo(function BillRow({
+  bill,
+  hide,
+  color,
+  onTap,
+  onDelete,
+  onPreview,
+  cat,
+  account,
+  toAccount,
+}: {
+  bill: Bill;
+  hide: boolean;
+  color: boolean;
+  onTap: (b: Bill) => void;
+  onDelete: (b: Bill) => void | Promise<void>;
+  onPreview: (url: string) => void;
+  cat?: Category;
+  account?: Account;
+  toAccount?: Account;
+}) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fired = useRef(false);
+  const start = () => {
+    fired.current = false;
+    timer.current = setTimeout(() => {
+      fired.current = true;
+      void onDelete(bill);
+    }, 500);
+  };
+  const stop = () => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+  };
+  // 卸载时清掉未触发的长按计时器：切月/同步刷新导致行消失时不再误弹删除确认
+  useEffect(() => stop, []);
+  const isTransfer = bill.kind === 'transfer';
+  const amountColor = isTransfer ? 'text-ink' : color ? (bill.type === 'expense' ? 'text-danger' : 'text-success') : 'text-ink';
+
+  const photoId = bill.photoIds?.[0];
+  const [photoUrl, setPhotoUrl] = useState<string | undefined>(() => (photoId ? repo.photoURL(photoId) : undefined));
+  useEffect(() => {
+    if (!photoId) return;
+    const cached = repo.photoURL(photoId);
+    if (cached) {
+      setPhotoUrl(cached);
+      return;
+    }
+    let alive = true;
+    void repo.loadPhotoURL(photoId).then((u) => {
+      if (alive && u) setPhotoUrl(u);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [photoId]);
+
+  return (
+    <div
+      className="cv-auto flex items-center gap-3 px-4 py-3 border-b border-line no-callout active:bg-surface transition-colors"
+      onTouchStart={start}
+      onTouchEnd={stop}
+      onTouchMove={stop}
+      onTouchCancel={stop}
+      onClick={() => {
+        if (fired.current) {
+          fired.current = false;
+          return;
+        }
+        onTap(bill);
+      }}
+    >
+      <span className="w-10 h-10 rounded-full bg-fill flex items-center justify-center text-ink-2">
+        {isTransfer ? <ArrowRightLeft className="w-5 h-5" /> : <CatIcon name={cat?.icon ?? ''} className="w-5 h-5" />}
+      </span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-ink truncate">{isTransfer ? (toAccount && toAccount.type === 'credit' ? '信用卡还款' : '账户转账') : (cat?.name ?? '未分类')}</p>
+        {(bill.note || account) && (
+          <p className="text-xs truncate">
+            {/* 备注是重点（次级深一档），支付账户用括号弱化区分 */}
+            {bill.note && <span className="text-ink-2">{bill.note}</span>}
+            {account && <span className="text-ink-3">{isTransfer ? `${bill.note ? '（' : ''}${account.name} → ${toAccount?.name ?? '未知账户'}${bill.note ? '）' : ''}` : (bill.note ? `（${account.name}）` : account.name)}</span>}
+          </p>
+        )}
+      </div>
+      {photoUrl && (
+        <img
+          src={photoUrl}
+          alt="凭证照片"
+          className="w-10 h-10 rounded-lg object-cover shrink-0"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPreview(photoUrl);
+          }}
+        />
+      )}
+      <span className={`text-base font-medium ${amountColor}`}>
+        {isTransfer ? '' : bill.type === 'expense' ? '-' : '+'}
+        {hide ? '****' : toYuan(bill.amountCents)}
+      </span>
+    </div>
+  );
+});
