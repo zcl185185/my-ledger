@@ -26,6 +26,7 @@ interface PendingPhoto {
 export function EntrySheet() {
   const open = useUI((s) => s.entryOpen);
   const editing = useUI((s) => s.editingBill);
+  const draft = useUI((s) => s.entryDraft);
   const close = useUI((s) => s.closeEntry);
   const toast = useUI((s) => s.toast);
   const categories = useData((s) => s.categories);
@@ -74,20 +75,20 @@ export function EntrySheet() {
       setKept(editing.photoIds ?? []);
       setPending([]);
     } else {
-      const t = defaultType;
+      const t = draft?.type ?? defaultType;
       setEntryMode(t);
       setType(t);
-      setAmount('');
-      setCategoryId(lastCategory[t] ?? '');
-      setAccountId(accounts[0]?.id ?? '');
+      setAmount(draft?.amount ?? '');
+      setCategoryId(draft?.categoryId ?? lastCategory[t] ?? '');
+      setAccountId(draft?.accountId ?? accounts[0]?.id ?? '');
       setToAccountId(accounts[1]?.id ?? '');
-      setNote('');
-      setDate(dayKey(Date.now()));
+      setNote(draft?.note ?? '');
+      setDate(draft?.date ?? dayKey(Date.now()));
       setPending([]);
       setKept([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, editing]);
+  }, [open, editing, draft]);
 
   const onPickFiles = async (files: FileList | null) => {
     if (!files?.length) return;

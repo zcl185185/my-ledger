@@ -10,6 +10,7 @@ import type { Session } from '@supabase/supabase-js';
 import { repo } from '../db/repo';
 import type { BackupFile, FullDump } from '../types';
 import { validateDump, mergeDumps } from '../utils/merge';
+import { uuid } from '../utils/compat';
 import { decryptJSON, encryptJSON } from './crypto';
 
 const VAULT_TABLE = 'vaults';
@@ -297,7 +298,7 @@ async function pushVault(sb: SupabaseClient, userId: string, dump: FullDump): Pr
 function deviceIdOf(): string {
   let id = repo.getMeta<string>('deviceId');
   if (!id) {
-    id = crypto.randomUUID();
+    id = uuid();
     void repo.setMeta('deviceId', id);
   }
   return id;

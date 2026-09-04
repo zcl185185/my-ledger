@@ -1,5 +1,17 @@
 import { create } from 'zustand';
-import type { Bill } from '../types';
+import type { Bill, BillType } from '../types';
+
+/** 由 iOS 快捷指令等外部入口预填的内容；始终需要用户确认后才会保存。 */
+export interface EntryDraft {
+  type?: BillType;
+  amount?: string;
+  categoryId?: string;
+  accountId?: string;
+  note?: string;
+  date?: string;
+  source?: 'shortcut';
+  recognitionWarning?: string;
+}
 
 export interface ToastItem {
   id: number;
@@ -28,7 +40,9 @@ interface UIState {
   resolveConfirm: (v: boolean) => void;
   entryOpen: boolean;
   editingBill: Bill | null;
+  entryDraft: EntryDraft | null;
   openEntry: (bill?: Bill | null) => void;
+  openQuickEntry: (draft: EntryDraft) => void;
   closeEntry: () => void;
   syncState: SyncState;
   syncError: string;
@@ -61,8 +75,10 @@ export const useUI = create<UIState>((set, get) => ({
 
   entryOpen: false,
   editingBill: null,
-  openEntry: (bill = null) => set({ entryOpen: true, editingBill: bill }),
-  closeEntry: () => set({ entryOpen: false, editingBill: null }),
+  entryDraft: null,
+  openEntry: (bill = null) => set({ entryOpen: true, editingBill: bill, entryDraft: null }),
+  openQuickEntry: (draft) => set({ entryOpen: true, editingBill: null, entryDraft: draft }),
+  closeEntry: () => set({ entryOpen: false, editingBill: null, entryDraft: null }),
 
   syncState: 'off',
   syncError: '',

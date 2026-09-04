@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { HashRouter, Route, Routes } from 'react-router-dom';
+import { HashRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { registerSW } from 'virtual:pwa-register';
 import { useData } from './store/data';
 import { useSettings } from './store/settings';
@@ -18,6 +18,18 @@ import { PageSkeleton } from './components/PageSkeleton';
 import { AuthPage } from './pages/AuthPage';
 import { getSession, isAccountConfigured, onAuthEvent, setupAccountLifecycle, syncVault } from './sync/account';
 import { useProfile } from './store/profile';
+import { decodeQuickEntryData, parseQuickEntryText } from './utils/quickEntry';
+
+// 开发地址可能曾经安装过生产版 PWA。开发模式下移除旧 Service Worker，
+// 避免手机一直拿到旧的 index.html/JavaScript；不会触碰 IndexedDB 账单数据。
+if (import.meta.env.DEV && typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  void navigator.serviceWorker.getRegistrations().then((registrations) => {
+    registrations.forEach((registration) => void registration.unregister());
+  });
+  if ('caches' in window) {
+    void caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key))));
+  }
+}
 
 // 非首屏路由懒加载：主包只含明细页，图表/发现/设置等按需拉取
 const ChartPage = lazy(() => import('./pages/ChartPage').then((m) => ({ default: m.ChartPage })));
@@ -238,6 +250,7 @@ function LedgerApp({ accountId }: { accountId: string }) {
             <Suspense fallback={<PageSkeleton />}>
               <Routes>
               <Route path="/" element={<DetailPage />} />
+              <Route path="/quick-entry" element={<QuickEntryPage />} />
               <Route path="/chart" element={<ChartPage />} />
               <Route path="/assets" element={<AssetsPage />} />
               <Route path="/discover" element={<DiscoverPage />} />
@@ -265,4 +278,85 @@ function LedgerApp({ accountId }: { accountId: string }) {
       </HashRouter>
     </ErrorBoundary>
   );
+}
+
+/**
+ * iOS 快捷指令入口：OCR 原文放在 URL 的 # 片段中，不会作为请求发送给服务器。
+ * 读取后立刻替换回首页地址，避免刷新时重复弹出。
+ */
+function QuickEntryPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const categories = useData((s) => s.categories);
+  const accounts = useData((s) => s.accounts);
+  const consumed = useRef(false);
+
+  useEffect(() => {
+    // 正常情况立即解析；只有 iOS 尚未把完整 hash 交给页面时才短间隔重试。
+    let retryTimer: number | undefined;
+
+    const readAndOpen = (attempt: number) => {
+      if (consumed.current) return;
+      const hashQueryIndex = window.location.hash.indexOf('?');
+      const hashSearch = hashQueryIndex >= 0 ? window.location.hash.slice(hashQueryIndex) : '';
+      const params = new URLSearchParams(location.search);
+      const hashParams = new URLSearchParams(hashSearch);
+      hashParams.forEach((value, key) => params.set(key, value));
+      if (!params.has('text') && !params.has('data')) {
+        if (attempt < 3) retryTimer = window.setTimeout(() => readAndOpen(attempt + 1), 100);
+        return;
+      }
+
+      const encodedData = params.get('data');
+      const legacyText = params.get('text') ?? '';
+      const text = encodedData ? (decodeQuickEntryData(encodedData) ?? legacyText) : legacyText;
+      // 少于 20 个字符通常表示 iOS 仍在更新 hash；短暂重试，避免锁定不完整文本。
+      if (text.trim().length < 20 && attempt < 3) {
+        retryTimer = window.setTimeout(() => readAndOpen(attempt + 1), 100);
+        return;
+      }
+      consumed.current = true;
+      const draft = parseQuickEntryText(text, categories, accounts);
+      const recognized: string[] = [];
+      if (draft.amount) recognized.push(`金额 ¥${draft.amount}`);
+      if (draft.note) recognized.push(`商家 ${draft.note}`);
+      // 清掉 OCR 原文，避免刷新后重复弹出，也避免敏感账单文字继续留在地址栏。
+      const outerParams = new URLSearchParams(window.location.search);
+      outerParams.delete('text');
+      outerParams.delete('data');
+      const outerSearch = outerParams.toString();
+      window.history.replaceState(
+        window.history.state,
+        '',
+        `${window.location.pathname}${outerSearch ? `?${outerSearch}` : ''}${window.location.hash}`,
+      );
+
+      // 先同步打开全局记账弹窗，再由 HashRouter 正式返回首页。这样路由组件会卸载，
+      // Safari 下次复用同一标签页时会重新挂载入口，不会被 consumed 状态拦截。
+      const base64WasLineWrapped = Boolean(encodedData && !text.trim() && encodedData.length === 76);
+      useUI.getState().openQuickEntry(draft);
+      useUI.getState().toast(
+        draft.recognitionWarning
+          ? draft.recognitionWarning
+          : base64WasLineWrapped
+            ? 'Base64 在第 76 个字符处被换行截断；请展开“Base64 编码”，把换行设为“无”'
+          : encodedData && !text.trim()
+            ? '快捷指令数据解码失败，请检查 Base64 编码步骤'
+            : recognized.length
+              ? `已识别${recognized.join('、')}，请确认`
+              : text.trim()
+                ? '已收到屏幕文字，但未找到金额，请手动填写'
+                : '没有收到屏幕识别文字，请检查快捷指令变量',
+        recognized.length && !draft.recognitionWarning && !base64WasLineWrapped ? 'info' : 'err',
+      );
+      navigate('/', { replace: true });
+    };
+
+    readAndOpen(0);
+    return () => {
+      if (retryTimer) window.clearTimeout(retryTimer);
+    };
+  }, [accounts, categories, location.search, navigate]);
+
+  return <DetailPage />;
 }
