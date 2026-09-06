@@ -5,6 +5,7 @@ import { uuid } from '../utils/compat';
 import { validateDump } from '../utils/merge';
 import { adapters } from './adapters';
 import { decryptJSON, encryptJSON } from './crypto';
+import { isLocalOnlyAccount } from '../utils/localMode';
 
 const CFG_KEY = 'syncConfig';
 const PASS_KEY = 'syncPass';
@@ -27,6 +28,10 @@ export async function saveSyncPass(pass: string): Promise<void> {
 }
 
 export function refreshSyncUI(): void {
+  if (isLocalOnlyAccount(repo.activeAccountId)) {
+    useUI.getState().setSync({ state: 'off' });
+    return;
+  }
   const cfg = getSyncConfig();
   const ui = useUI.getState();
   if (!cfg?.enabled) {
@@ -40,6 +45,7 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 
 /** 写操作后 5s 防抖自动同步（Gist/WebDAV 备份 + 登录用户的云端保险库） */
 export function scheduleSync(): void {
+  if (isLocalOnlyAccount(repo.activeAccountId)) return;
   const cfg = getSyncConfig();
   if (cfg?.enabled) {
     clearTimeout(timer);
@@ -74,6 +80,10 @@ let syncing = false;
 let pending = false;
 
 export async function doSync(): Promise<void> {
+  if (isLocalOnlyAccount(repo.activeAccountId)) {
+    useUI.getState().setSync({ state: 'off' });
+    return;
+  }
   // 并发互斥：防抖定时器/hidden/online/手动同步可能同时触发，
   // 并发 push 会重复创建 Gist 或旧快照覆盖新快照
   if (syncing) {

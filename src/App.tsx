@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { HashRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { registerSW } from 'virtual:pwa-register';
 import { useData } from './store/data';
 import { useSettings } from './store/settings';
@@ -19,6 +19,7 @@ import { AuthPage } from './pages/AuthPage';
 import { getSession, isAccountConfigured, onAuthEvent, setupAccountLifecycle, syncVault } from './sync/account';
 import { useProfile } from './store/profile';
 import { decodeQuickEntryData, parseQuickEntryText } from './utils/quickEntry';
+import { isLocalOnlySelected, LOCAL_ONLY_ACCOUNT_ID, setLocalOnlySelected } from './utils/localMode';
 
 // 开发地址可能曾经安装过生产版 PWA。开发模式下移除旧 Service Worker，
 // 避免手机一直拿到旧的 index.html/JavaScript；不会触碰 IndexedDB 账单数据。
@@ -49,6 +50,7 @@ const ReportPage = lazy(() => import('./pages/ReportPage').then((m) => ({ defaul
 const RepaymentPage = lazy(() => import('./pages/RepaymentPage').then((m) => ({ default: m.RepaymentPage })));
 const Allocation6211Page = lazy(() => import('./pages/Allocation6211Page').then((m) => ({ default: m.Allocation6211Page })));
 const BusinessTripPage = lazy(() => import('./pages/BusinessTripPage').then((m) => ({ default: m.BusinessTripPage })));
+const LocalStoragePage = lazy(() => import('./pages/settings/LocalStoragePage').then((m) => ({ default: m.LocalStoragePage })));
 
 /** PWA 更新提示：SW 检测到新版本时弹横幅，用户确认后刷新 */
 try {
@@ -65,7 +67,7 @@ try {
   /* Service Worker 不可用（如 file:// 或旧浏览器）时忽略 */
 }
 
-type AuthStatus = 'checking' | 'signedOut' | 'signedIn' | 'recovery' | 'unconfigured';
+type AuthStatus = 'checking' | 'signedOut' | 'signedIn' | 'recovery' | 'unconfigured' | 'local';
 
 function BrandLoading({ message }: { message?: string }) {
   return (
@@ -78,7 +80,9 @@ function BrandLoading({ message }: { message?: string }) {
 }
 
 export default function App() {
-  const [authStatus, setAuthStatus] = useState<AuthStatus>(() => (isAccountConfigured() ? 'checking' : 'unconfigured'));
+  const [authStatus, setAuthStatus] = useState<AuthStatus>(() => (
+    isLocalOnlySelected() ? 'local' : isAccountConfigured() ? 'checking' : 'unconfigured'
+  ));
   const [session, setSession] = useState<Session | null>(null);
   const themeColor = useSettings((state) => state.themeColor);
   const appearance = useSettings((state) => state.appearance);
@@ -90,11 +94,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isAccountConfigured()) return;
+    if (!isAccountConfigured() || isLocalOnlySelected()) return;
     let alive = true;
     let authEventSeen = false;
     void getSession().then((current) => {
-      if (!alive || authEventSeen) return;
+      if (!alive || authEventSeen || isLocalOnlySelected()) return;
       setSession(current);
       setAuthStatus(current ? 'signedIn' : 'signedOut');
     }).catch(() => {
@@ -102,7 +106,7 @@ export default function App() {
     });
     const off = onAuthEvent({
       onSignedIn: (next) => {
-        if (!alive) return;
+        if (!alive || isLocalOnlySelected()) return;
         authEventSeen = true;
         const loadedAccount = useData.getState().accountId;
         if (loadedAccount && loadedAccount !== next.user.id) {
@@ -113,7 +117,7 @@ export default function App() {
         setAuthStatus('signedIn');
       },
       onSignedOut: () => {
-        if (!alive) return;
+        if (!alive || isLocalOnlySelected()) return;
         authEventSeen = true;
         useData.getState().deactivate();
         useProfile.getState().deactivate();
@@ -121,7 +125,7 @@ export default function App() {
         setAuthStatus('signedOut');
       },
       onPasswordRecovery: () => {
-        if (!alive) return;
+        if (!alive || isLocalOnlySelected()) return;
         authEventSeen = true;
         useData.getState().deactivate();
         useProfile.getState().deactivate();
@@ -134,6 +138,14 @@ export default function App() {
       off();
     };
   }, []);
+
+  const enterLocalMode = () => {
+    setLocalOnlySelected(true);
+    useData.getState().deactivate();
+    useProfile.getState().deactivate();
+    setSession(null);
+    setAuthStatus('local');
+  };
 
   useEffect(() => {
     document.documentElement.style.setProperty('--primary', themeColor);
@@ -148,22 +160,28 @@ export default function App() {
   }, []);
 
   if (authStatus === 'unconfigured') {
-    return <BrandLoading message="账号服务尚未配置，暂时无法登录。请先完成 Supabase 配置。" />;
+    return (
+      <ErrorBoundary>
+        <AuthPage cloudAvailable={false} onUseLocal={enterLocalMode} />
+        <Toasts />
+      </ErrorBoundary>
+    );
   }
   if (authStatus === 'checking') return <BrandLoading message="正在检查登录状态…" />;
   if (authStatus === 'signedOut' || authStatus === 'recovery') {
     return (
       <ErrorBoundary>
-        <AuthPage recovery={authStatus === 'recovery'} />
+        <AuthPage recovery={authStatus === 'recovery'} onUseLocal={enterLocalMode} />
         <Toasts />
       </ErrorBoundary>
     );
   }
+  if (authStatus === 'local') return <LedgerApp accountId={LOCAL_ONLY_ACCOUNT_ID} localOnly />;
   if (!session) return <BrandLoading />;
   return <LedgerApp accountId={session.user.id} />;
 }
 
-function LedgerApp({ accountId }: { accountId: string }) {
+function LedgerApp({ accountId, localOnly = false }: { accountId: string; localOnly?: boolean }) {
   const ready = useData((s) => s.ready);
   const mode = useData((s) => s.mode);
   const writeFailed = useData((s) => s.writeFailed);
@@ -175,13 +193,13 @@ function LedgerApp({ accountId }: { accountId: string }) {
     let active = true;
     void useProfile.getState().activate(accountId);
     void useData.getState().init(accountId).then(() => {
-      if (active) void syncVault().catch(() => {/* 错误已写入当前账号状态，稍后可在账号页查看 */});
+      if (active && !localOnly) void syncVault().catch(() => {/* 错误已写入当前账号状态，稍后可在账号页查看 */});
     });
     // 照片云自动上传：保险库同步成功后防抖执行（登录态下才实际运行）
     const onVaultSynced = () => {
       void import('./vip/photoCloud').then((m) => m.schedulePhotoCloudSync());
     };
-    window.addEventListener('vault-synced', onVaultSynced);
+    if (!localOnly) window.addEventListener('vault-synced', onVaultSynced);
     // 空闲预取 TabBar 三个懒加载页面的 chunk：冷启动后首次切换不再闪骨架屏
     // （每个 chunk 仅几 KB；图表库 208KB 仍保持按需加载，不影响首装体积策略）
     const idle = typeof window.requestIdleCallback === 'function' ? window.requestIdleCallback.bind(window) : (cb: () => void) => window.setTimeout(cb, 2200);
@@ -202,9 +220,9 @@ function LedgerApp({ accountId }: { accountId: string }) {
     return () => {
       active = false;
       document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('vault-synced', onVaultSynced);
+      if (!localOnly) window.removeEventListener('vault-synced', onVaultSynced);
     };
-  }, [accountId]);
+  }, [accountId, localOnly]);
 
   if (!ready) {
     return (
@@ -266,8 +284,8 @@ function LedgerApp({ accountId }: { accountId: string }) {
               <Route path="/settings/accounts" element={<AccountsPage />} />
               <Route path="/settings/ledgers" element={<LedgersPage />} />
               <Route path="/settings/data" element={<DataPage />} />
-              <Route path="/settings/backup" element={<BackupPage />} />
-              <Route path="/settings/account" element={<AccountPage />} />
+              <Route path="/settings/backup" element={localOnly ? <Navigate to="/settings/data" replace /> : <BackupPage />} />
+              <Route path="/settings/account" element={localOnly ? <LocalStoragePage /> : <AccountPage />} />
               <Route path="/settings/about" element={<AboutPage />} />
               <Route path="/settings/recurring" element={<RecurringPage />} />
               <Route path="/report" element={<ReportPage />} />

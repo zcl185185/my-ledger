@@ -12,6 +12,7 @@ import type { BackupFile, FullDump } from '../types';
 import { validateDump, mergeDumps } from '../utils/merge';
 import { uuid } from '../utils/compat';
 import { decryptJSON, encryptJSON } from './crypto';
+import { isLocalOnlyAccount } from '../utils/localMode';
 
 const VAULT_TABLE = 'vaults';
 const VAULT_PASS_KEY = 'shark-vault-pass';
@@ -48,6 +49,7 @@ function getSupabase(): Promise<SupabaseClient> {
 
 /** 共享客户端：vip 权益层/照片云同步复用同一实例（必须先通过 isAccountConfigured() 检查） */
 export function getSharedSupabase(): Promise<SupabaseClient> {
+  if (isLocalOnlyAccount(repo.activeAccountId)) throw new Error('仅本地模式不会连接云端');
   return getSupabase();
 }
 
@@ -187,7 +189,7 @@ let vaultTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** 写操作后 5s 防抖自动推送到云端保险库（未登录/未配置时静默跳过） */
 export function scheduleVaultSync(): void {
-  if (!isAccountConfigured() || !repo.activeAccountId) return;
+  if (!isAccountConfigured() || !repo.activeAccountId || isLocalOnlyAccount(repo.activeAccountId)) return;
   clearTimeout(vaultTimer);
   vaultTimer = setTimeout(() => void syncVault(), 5000);
 }
@@ -197,6 +199,7 @@ export async function syncVault(): Promise<VaultSyncResult> {
   if (!isAccountConfigured()) throw new Error('账号同步未配置');
   const startedAccountId = repo.activeAccountId;
   if (!startedAccountId) throw new Error('本地账号尚未加载');
+  if (isLocalOnlyAccount(startedAccountId)) throw new Error('仅本地模式不会连接云端');
   if (vaultSyncing) {
     vaultPending = true;
     return { pulled: false, pushed: false, billCount: 0, plannerCount: 0 };
@@ -351,6 +354,6 @@ export function lastVaultError(): string | null {
 export function setupAccountLifecycle(): void {
   if (!isAccountConfigured()) return;
   window.addEventListener('online', () => {
-    if (repo.activeAccountId) void syncVault().catch(() => {});
+    if (repo.activeAccountId && !isLocalOnlyAccount(repo.activeAccountId)) void syncVault().catch(() => {});
   });
 }

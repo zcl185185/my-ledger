@@ -8,8 +8,11 @@ import { Sheet } from '../components/Sheet';
 import { useNavigate } from 'react-router-dom';
 import { useProfile } from '../store/profile';
 import { useUI } from '../store/ui';
+import { isLocalOnlyAccount } from '../utils/localMode';
 
 export function MinePage() {
+  const accountId = useData((s) => s.accountId);
+  const localOnly = isLocalOnlyAccount(accountId);
   const bills = useData((s) => s.bills);
   const nickname = useProfile((s) => s.nickname);
   const avatarUrl = useProfile((s) => s.avatarUrl);
@@ -48,7 +51,7 @@ export function MinePage() {
   };
 
   const clearAvatar = async () => {
-    const ok = await confirm({ title: '删除头像？', message: '将删除当前账号的本机和云端头像。', confirmText: '删除', danger: true });
+    const ok = await confirm({ title: '删除头像？', message: localOnly ? '将删除保存在本机的头像。' : '将删除当前账号的本机和云端头像。', confirmText: '删除', danger: true });
     if (!ok) return;
     setAvatarBusy(true);
     try {
@@ -78,7 +81,10 @@ export function MinePage() {
                 <Camera size={11} />
               </span>
             </button>
-            <span className="text-xl font-bold">{nickname}</span>
+            <div>
+              <span className="text-xl font-bold">{nickname}</span>
+              {localOnly && <p className="mt-1 text-[11px] text-header-ink/70">仅本机保存 · 不上传云端</p>}
+            </div>
           </div>
           <div className="grid grid-cols-2 text-center mt-6">
             <span>
@@ -150,7 +156,7 @@ export function MinePage() {
               <Trash2 size={16} /> 删除头像
             </button>
           )}
-          <p className="mt-3 text-center text-xs leading-relaxed text-ink-3">图片会自动居中裁剪并压缩，保存到当前账号。</p>
+          <p className="mt-3 text-center text-xs leading-relaxed text-ink-3">{localOnly ? '图片会压缩后仅保存在当前浏览器。' : '图片会自动居中裁剪并压缩，保存到当前账号。'}</p>
         </div>
       </Sheet>
     </div>

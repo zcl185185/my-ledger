@@ -1,12 +1,20 @@
 import { useEffect, useState } from 'react';
-import { Eye, EyeOff, KeyRound, Loader2, Mail } from 'lucide-react';
+import { Eye, EyeOff, HardDrive, KeyRound, Loader2, Mail, ShieldCheck } from 'lucide-react';
 import { useUI } from '../store/ui';
 import { authErrorMessage, sendResetEmail, signIn, signOut, signUp, updatePassword } from '../sync/account';
 
 type Mode = 'login' | 'register' | 'forgot' | 'recovery';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function AuthPage({ recovery = false }: { recovery?: boolean }) {
+export function AuthPage({
+  recovery = false,
+  cloudAvailable = true,
+  onUseLocal,
+}: {
+  recovery?: boolean;
+  cloudAvailable?: boolean;
+  onUseLocal: () => void;
+}) {
   const toast = useUI((state) => state.toast);
   const [mode, setMode] = useState<Mode>(recovery ? 'recovery' : 'login');
   const [email, setEmail] = useState('');
@@ -64,7 +72,7 @@ export function AuthPage({ recovery = false }: { recovery?: boolean }) {
       ? '输入注册邮箱，我们会向你发送重置链接。'
       : mode === 'recovery'
         ? '请输入至少 8 位的新密码。'
-        : '登录后进入属于你的本地账本。';
+        : '登录后使用云端账本，并在你的设备之间加密同步。';
 
   return (
     <div className="h-full overflow-y-auto bg-surface px-5 pt-safe pb-safe">
@@ -72,10 +80,10 @@ export function AuthPage({ recovery = false }: { recovery?: boolean }) {
         <div className="flex flex-1 min-h-[220px] flex-col items-center justify-center py-8">
           <div className="flex h-24 w-24 items-center justify-center rounded-[28px] bg-primary text-5xl font-semibold text-on-primary shadow-lg">¥</div>
           <h1 className="mt-5 text-2xl font-semibold tracking-wide text-ink">我的账本</h1>
-          <p className="mt-2 text-xs text-ink-3">每个账号，一本独立账本</p>
+          <p className="mt-2 text-xs text-ink-3">云端同步，或仅保存在当前设备</p>
         </div>
 
-        <div className="mb-4 rounded-2xl bg-card p-4 shadow-lg">
+        {cloudAvailable ? <div className="mb-3 rounded-2xl bg-card p-4 shadow-lg">
           <div className="mb-4">
             <h2 className="text-lg font-semibold text-ink">{title}</h2>
             <p className="mt-1 text-xs leading-relaxed text-ink-3">{description}</p>
@@ -143,8 +151,34 @@ export function AuthPage({ recovery = false }: { recovery?: boolean }) {
               </button>
             </div>
           )}
-        </div>
-        <p className="pb-2 text-center text-[11px] leading-relaxed text-ink-3">账本保存在当前账号的独立空间中，退出后不会展示给其他账号。</p>
+        </div> : (
+          <div className="mb-3 rounded-2xl bg-card p-4 text-center shadow-lg">
+            <ShieldCheck className="mx-auto text-ink-3" size={22} />
+            <p className="mt-2 text-sm font-medium text-ink">云端账号服务尚未配置</p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-3">你仍然可以使用下面的仅本地模式。</p>
+          </div>
+        )}
+
+        {!recovery && (
+          <div className="mb-4 rounded-2xl bg-card p-4 shadow-lg">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-fill text-ink-2">
+                <HardDrive size={20} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-sm font-semibold text-ink">仅在本机使用</h2>
+                <p className="mt-1 text-xs leading-relaxed text-ink-3">无需登录，账单只保存在当前浏览器，不会上传到 Supabase。</p>
+              </div>
+            </div>
+            <button
+              className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-fill text-sm font-medium text-ink"
+              onClick={onUseLocal}
+            >
+              <HardDrive size={16} />进入本地账本
+            </button>
+          </div>
+        )}
+        <p className="pb-2 text-center text-[11px] leading-relaxed text-ink-3">两种模式的数据完全隔离，切换模式不会自动上传本地账本。</p>
       </div>
     </div>
   );

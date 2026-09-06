@@ -32,6 +32,7 @@ import type { Account, AccountType } from '../types';
 import { ACCOUNT_TYPES, accountBalanceAt, accountIcon, accountNature, accountTypeLabel, billEffectOnAccount, portfolioTotals } from '../utils/accounts';
 import { uuid } from '../utils/compat';
 import { toYuan, toYuanTrim } from '../utils/money';
+import { isLocalOnlyAccount } from '../utils/localMode';
 
 const COLORS = ['#D3A52D', '#5B8DEF', '#45B987', '#D86A7A', '#826ED8', '#D58245', '#55AEB5', '#8995A8'];
 
@@ -46,6 +47,8 @@ function amountToCents(value: string): number | null {
 
 export function AssetsPage() {
   const navigate = useNavigate();
+  const accountId = useData((s) => s.accountId);
+  const localOnly = isLocalOnlyAccount(accountId);
   const accounts = useData((s) => s.accounts);
   const bills = useData((s) => s.bills);
   const categories = useData((s) => s.categories);
@@ -196,7 +199,7 @@ export function AssetsPage() {
             <FeatureButton icon={<Briefcase size={20} />} label="出差记录" onClick={() => navigate('/business-trip')} />
             <FeatureButton icon={<Repeat2 size={20} />} label="周期记账" onClick={() => navigate('/settings/recurring')} />
             <FeatureButton icon={<Tags size={20} />} label="分类管理" onClick={() => navigate('/settings/categories')} />
-            <FeatureButton icon={<DatabaseBackup size={20} />} label="数据备份" onClick={() => navigate('/settings/backup')} />
+            <FeatureButton icon={<DatabaseBackup size={20} />} label={localOnly ? '数据导出' : '数据备份'} onClick={() => navigate(localOnly ? '/settings/data' : '/settings/backup')} />
           </div>
         </section>
 

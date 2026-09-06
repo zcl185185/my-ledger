@@ -5,6 +5,7 @@ import { seedAccounts, seedCategories, seedLedgers } from './seed';
 import { mergeDumps } from '../utils/merge';
 import { uuid } from '../utils/compat';
 import { readLegacyPlannerData } from '../utils/plannerData';
+import { isLocalOnlyAccount } from '../utils/localMode';
 
 export interface DBData {
   bills: Bill[];
@@ -100,7 +101,8 @@ class Repo {
       }
     }
     // 升级到账号隔离后的首次登录：旧版未分账号的数据仅归属给第一个登录账号。
-    await this.adoptLegacyData(accountId);
+    // 仅本地模式使用全新的独立空间，不认领任何旧账号数据。
+    if (!isLocalOnlyAccount(accountId)) await this.adoptLegacyData(accountId);
     // 数据级迁移
     const from = Number(this.data.meta['schemaVersion'] ?? 0);
     const to = runMigrations(this.data, from);

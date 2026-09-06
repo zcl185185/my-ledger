@@ -24,13 +24,16 @@ function injectCsp(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   // 相对 base：兼容 GitHub Pages 项目子路径部署与任意安装目录
   base: './',
   plugins: [
     react(),
     injectCsp(),
     VitePWA({
+      // 公网 IP 的 HTTP 部署无法使用 Service Worker；server 模式关闭生成，
+      // 同时避开当前 Windows 环境的 workbox-build ESM 兼容错误。
+      disable: mode === 'server',
       registerType: 'prompt',
       manifest: {
         name: '我的账本',
@@ -88,4 +91,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

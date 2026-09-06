@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { useSettings } from './settings';
 import { compressAvatar } from '../utils/image';
 import { deleteCloudAvatar, loadCloudProfile, saveCloudNickname, uploadCloudAvatar } from '../sync/profile';
+import { isLocalOnlyAccount } from '../utils/localMode';
 
 interface StoredProfile {
   nickname: string;
@@ -71,8 +72,10 @@ export const useProfile = create<ProfileState>((set, get) => ({
 
   activate: async (accountId) => {
     const local = readLocal(accountId) ?? { nickname: firstNickname(accountId) };
-    set({ accountId, nickname: local.nickname || '我', avatarUrl: local.avatarDataUrl ?? null, loading: true });
+    const localOnly = isLocalOnlyAccount(accountId);
+    set({ accountId, nickname: local.nickname || '我', avatarUrl: local.avatarDataUrl ?? null, loading: !localOnly });
     writeLocal(accountId, local);
+    if (localOnly) return;
     try {
       const cloud = await loadCloudProfile(accountId);
       if (get().accountId !== accountId) return;
@@ -97,7 +100,7 @@ export const useProfile = create<ProfileState>((set, get) => ({
     const current = readLocal(accountId) ?? { nickname };
     writeLocal(accountId, { ...current, nickname });
     set({ nickname });
-    await saveCloudNickname(accountId, nickname);
+    if (!isLocalOnlyAccount(accountId)) await saveCloudNickname(accountId, nickname);
   },
 
   setAvatar: async (file) => {
@@ -110,7 +113,7 @@ export const useProfile = create<ProfileState>((set, get) => ({
     const current = readLocal(accountId) ?? { nickname: get().nickname };
     writeLocal(accountId, { ...current, avatarDataUrl });
     set({ avatarUrl: avatarDataUrl });
-    await uploadCloudAvatar(accountId, avatar);
+    if (!isLocalOnlyAccount(accountId)) await uploadCloudAvatar(accountId, avatar);
   },
 
   removeAvatar: async () => {
@@ -119,6 +122,6 @@ export const useProfile = create<ProfileState>((set, get) => ({
     const current = readLocal(accountId) ?? { nickname: get().nickname };
     writeLocal(accountId, { nickname: current.nickname || '我' });
     set({ avatarUrl: null });
-    await deleteCloudAvatar(accountId);
+    if (!isLocalOnlyAccount(accountId)) await deleteCloudAvatar(accountId);
   },
 }));
