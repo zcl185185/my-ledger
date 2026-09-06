@@ -1,8 +1,11 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import {
   BadgeDollarSign,
+  CalendarClock,
+  ChartPie,
   ChevronRight,
   CreditCard,
+  DatabaseBackup,
   Eye,
   EyeOff,
   Gem,
@@ -11,12 +14,15 @@ import {
   Landmark,
   Pencil,
   Plus,
+  Repeat2,
   Smartphone,
+  Tags,
   Trash2,
   TrendingUp,
   Wallet,
   X,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Sheet } from '../components/Sheet';
 import { useData } from '../store/data';
 import { useSettings } from '../store/settings';
@@ -38,6 +44,7 @@ function amountToCents(value: string): number | null {
 }
 
 export function AssetsPage() {
+  const navigate = useNavigate();
   const accounts = useData((s) => s.accounts);
   const bills = useData((s) => s.bills);
   const categories = useData((s) => s.categories);
@@ -177,6 +184,20 @@ export function AssetsPage() {
       </header>
 
       <main className="px-3 space-y-3">
+        <section className="rounded-2xl bg-card p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold">常用功能</h2>
+            <span className="text-xs text-ink-3">点击进入独立页面</span>
+          </div>
+          <div className="grid grid-cols-4 gap-x-2 gap-y-3">
+            <FeatureButton icon={<CalendarClock size={20} />} label="还款时间轴" onClick={() => navigate('/repayment')} emphasis />
+            <FeatureButton icon={<ChartPie size={20} />} label="6211 财务" onClick={() => navigate('/allocation-6211')} />
+            <FeatureButton icon={<Repeat2 size={20} />} label="周期记账" onClick={() => navigate('/settings/recurring')} />
+            <FeatureButton icon={<Tags size={20} />} label="分类管理" onClick={() => navigate('/settings/categories')} />
+            <FeatureButton icon={<DatabaseBackup size={20} />} label="数据备份" onClick={() => navigate('/settings/backup')} />
+          </div>
+        </section>
+
         <section className="rounded-2xl bg-card p-4">
           <div className="flex items-center justify-between mb-2">
             <h2 className="font-semibold">净资产趋势</h2>
@@ -321,6 +342,15 @@ export function AssetsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function FeatureButton({ icon, label, onClick, emphasis = false }: { icon: ReactNode; label: string; onClick: () => void; emphasis?: boolean }) {
+  return (
+    <button className="min-w-0 min-h-[76px] rounded-xl flex flex-col items-center justify-start gap-1.5 px-1 py-1 text-center" onClick={onClick}>
+      <span className={`w-11 h-11 rounded-xl flex items-center justify-center ${emphasis ? 'bg-primary text-on-primary' : 'bg-fill text-ink-2'}`}>{icon}</span>
+      <span className="w-full text-[11px] font-medium truncate">{label}</span>
+    </button>
   );
 }
 

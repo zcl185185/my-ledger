@@ -46,6 +46,8 @@ const AccountPage = lazy(() => import('./pages/settings/AccountPage').then((m) =
 const AboutPage = lazy(() => import('./pages/settings/AboutPage').then((m) => ({ default: m.AboutPage })));
 const RecurringPage = lazy(() => import('./pages/settings/RecurringPage').then((m) => ({ default: m.RecurringPage })));
 const ReportPage = lazy(() => import('./pages/ReportPage').then((m) => ({ default: m.ReportPage })));
+const RepaymentPage = lazy(() => import('./pages/RepaymentPage').then((m) => ({ default: m.RepaymentPage })));
+const Allocation6211Page = lazy(() => import('./pages/Allocation6211Page').then((m) => ({ default: m.Allocation6211Page })));
 
 /** PWA 更新提示：SW 检测到新版本时弹横幅，用户确认后刷新 */
 try {
@@ -253,6 +255,8 @@ function LedgerApp({ accountId }: { accountId: string }) {
               <Route path="/quick-entry" element={<QuickEntryPage />} />
               <Route path="/chart" element={<ChartPage />} />
               <Route path="/assets" element={<AssetsPage />} />
+              <Route path="/repayment" element={<RepaymentPage />} />
+              <Route path="/allocation-6211" element={<Allocation6211Page />} />
               <Route path="/discover" element={<DiscoverPage />} />
               <Route path="/mine" element={<MinePage />} />
               <Route path="/settings" element={<SettingsHome />} />

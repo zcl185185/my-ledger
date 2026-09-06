@@ -12,7 +12,11 @@ const tabs = [
 export function TabBar() {
   const openEntry = useUI((s) => s.openEntry);
   const location = useLocation();
-  if (location.pathname.startsWith('/settings')) return null;
+  if (
+    location.pathname.startsWith('/settings')
+    || location.pathname.startsWith('/repayment')
+    || location.pathname.startsWith('/allocation-6211')
+  ) return null;
   return (
     <nav
       className="fixed bottom-0 left-0 right-0 z-30 bg-card border-t border-line shadow-lg"
