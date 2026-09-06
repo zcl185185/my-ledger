@@ -48,6 +48,7 @@ const RecurringPage = lazy(() => import('./pages/settings/RecurringPage').then((
 const ReportPage = lazy(() => import('./pages/ReportPage').then((m) => ({ default: m.ReportPage })));
 const RepaymentPage = lazy(() => import('./pages/RepaymentPage').then((m) => ({ default: m.RepaymentPage })));
 const Allocation6211Page = lazy(() => import('./pages/Allocation6211Page').then((m) => ({ default: m.Allocation6211Page })));
+const BusinessTripPage = lazy(() => import('./pages/BusinessTripPage').then((m) => ({ default: m.BusinessTripPage })));
 
 /** PWA 更新提示：SW 检测到新版本时弹横幅，用户确认后刷新 */
 try {
@@ -257,6 +258,7 @@ function LedgerApp({ accountId }: { accountId: string }) {
               <Route path="/assets" element={<AssetsPage />} />
               <Route path="/repayment" element={<RepaymentPage />} />
               <Route path="/allocation-6211" element={<Allocation6211Page />} />
+              <Route path="/business-trip" element={<BusinessTripPage />} />
               <Route path="/discover" element={<DiscoverPage />} />
               <Route path="/mine" element={<MinePage />} />
               <Route path="/settings" element={<SettingsHome />} />

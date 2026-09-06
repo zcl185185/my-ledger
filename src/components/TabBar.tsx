@@ -16,6 +16,7 @@ export function TabBar() {
     location.pathname.startsWith('/settings')
     || location.pathname.startsWith('/repayment')
     || location.pathname.startsWith('/allocation-6211')
+    || location.pathname.startsWith('/business-trip')
   ) return null;
   return (
     <nav

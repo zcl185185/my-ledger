@@ -1,4 +1,5 @@
-import type { FullDump } from '../types';
+import type { BusinessTrip, FullDump, MonthlyAllocationPlan, RepaymentPlan } from '../types';
+import { isBusinessTrip, isMonthlyAllocationPlan, isRepaymentPlan } from './plannerData';
 
 type WithId = { id: string; updatedAt?: number };
 
@@ -12,6 +13,29 @@ function mergeById<T extends WithId>(local: T[], remote: T[]): T[] {
   return Array.from(map.values());
 }
 
+function mergeAllocationPlans(local: MonthlyAllocationPlan[], remote: MonthlyAllocationPlan[]): MonthlyAllocationPlan[] {
+  const map = new Map(local.map((plan) => [plan.yearMonth, plan]));
+  for (const plan of remote) {
+    const current = map.get(plan.yearMonth);
+    if (!current || plan.savedAt > current.savedAt) map.set(plan.yearMonth, plan);
+  }
+  return Array.from(map.values());
+}
+
+function mergeBusinessTrips(local: BusinessTrip[], remote: BusinessTrip[]): BusinessTrip[] {
+  const map = new Map(local.map((trip) => [trip.id, trip]));
+  for (const trip of remote) {
+    const current = map.get(trip.id);
+    if (!current) {
+      map.set(trip.id, trip);
+      continue;
+    }
+    const newest = trip.updatedAt >= current.updatedAt ? trip : current;
+    map.set(trip.id, { ...newest, expenses: mergeById(current.expenses ?? [], trip.expenses ?? []) });
+  }
+  return Array.from(map.values());
+}
+
 /** 合并规则：按 id 并集，同 id 取 updatedAt 大者；budgets 按 yearMonth 同取 updatedAt 大者（本地优先） */
 export function mergeDumps(local: FullDump['data'], remote: FullDump['data']): FullDump['data'] {
   return {
@@ -21,6 +45,9 @@ export function mergeDumps(local: FullDump['data'], remote: FullDump['data']): F
     tags: mergeById(local.tags, remote.tags),
     ledgers: mergeById(local.ledgers, remote.ledgers),
     recurringBills: mergeById(local.recurringBills ?? [], remote.recurringBills ?? []),
+    repaymentPlans: mergeById(local.repaymentPlans ?? [], remote.repaymentPlans ?? []),
+    allocationPlans: mergeAllocationPlans(local.allocationPlans ?? [], remote.allocationPlans ?? []),
+    businessTrips: mergeBusinessTrips(local.businessTrips ?? [], remote.businessTrips ?? []),
     budgets: (() => {
       const map = new Map(local.budgets.map((b) => [b.yearMonth, b]));
       for (const b of remote.budgets) {
@@ -76,9 +103,22 @@ export function validateDump(data: unknown): { ok: boolean; errors: string[]; du
   const recurringBills = d.recurringBills === undefined
     ? []
     : arr(d.recurringBills, 'recurringBills', (r) => typeof r.id === 'string' && typeof r.name === 'string' && Number.isSafeInteger(r.amountCents));
+  const repaymentPlans = d.repaymentPlans === undefined
+    ? []
+    : arr(d.repaymentPlans, 'repaymentPlans', (item) => isRepaymentPlan(item)) as unknown as RepaymentPlan[];
+  const allocationPlans = d.allocationPlans === undefined
+    ? []
+    : arr(d.allocationPlans, 'allocationPlans', (item) => isMonthlyAllocationPlan(item)) as unknown as MonthlyAllocationPlan[];
+  const businessTrips = d.businessTrips === undefined
+    ? []
+    : arr(d.businessTrips, 'businessTrips', (item) => isBusinessTrip(item)) as unknown as BusinessTrip[];
   if (errors.length) return { ok: false, errors };
   // 归一化旧版/手工编辑备份中缺失的可选字段，杜绝 tagIds/note 为空时在 CSV 导出、编辑回填处崩溃。
   // 照片 Blob 不在备份内，恢复后 photoIds 指向的照片不存在时 UI 显示占位（查看器/缩略图均有兜底）
   const normalized = bills.map((b) => ({ ...b, note: b.note ?? '', tagIds: b.tagIds ?? [], photoIds: b.photoIds ?? [] }));
-  return { ok: true, errors: [], dump: { ...d, bills: normalized, recurringBills } as unknown as FullDump['data'] };
+  return {
+    ok: true,
+    errors: [],
+    dump: { ...d, bills: normalized, recurringBills, repaymentPlans, allocationPlans, businessTrips } as unknown as FullDump['data'],
+  };
 }

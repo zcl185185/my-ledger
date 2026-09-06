@@ -1,9 +1,10 @@
 import type { IDBPDatabase } from 'idb';
-import type { Account, Bill, Budget, Category, FullDump, Ledger, Photo, RecurringBill, Tag } from '../types';
+import type { Account, Bill, Budget, BusinessTrip, Category, FullDump, Ledger, MonthlyAllocationPlan, Photo, RecurringBill, RepaymentPlan, Tag } from '../types';
 import { openLedgerDB, probeStorage, runMigrations, SCHEMA_VERSION, type StorageMode } from './schema';
 import { seedAccounts, seedCategories, seedLedgers } from './seed';
 import { mergeDumps } from '../utils/merge';
 import { uuid } from '../utils/compat';
+import { readLegacyPlannerData } from '../utils/plannerData';
 
 export interface DBData {
   bills: Bill[];
@@ -13,15 +14,30 @@ export interface DBData {
   ledgers: Ledger[];
   budgets: Budget[];
   recurringBills: RecurringBill[];
+  repaymentPlans: RepaymentPlan[];
+  allocationPlans: MonthlyAllocationPlan[];
+  businessTrips: BusinessTrip[];
   meta: Record<string, unknown>;
 }
 
 const LEGACY_LS_KEY = 'shark-ledger-fallback';
 const LEGACY_OWNER_KEY = 'shark-ledger-legacy-owner';
-const STORES = ['bills', 'categories', 'accounts', 'tags', 'ledgers', 'budgets', 'recurringBills'] as const;
+const STORES = ['bills', 'categories', 'accounts', 'tags', 'ledgers', 'budgets', 'recurringBills', 'repaymentPlans', 'allocationPlans', 'businessTrips'] as const;
 type StoreName = (typeof STORES)[number];
 
-const emptyData = (): DBData => ({ bills: [], categories: [], accounts: [], tags: [], ledgers: [], budgets: [], recurringBills: [], meta: {} });
+const emptyData = (): DBData => ({
+  bills: [],
+  categories: [],
+  accounts: [],
+  tags: [],
+  ledgers: [],
+  budgets: [],
+  recurringBills: [],
+  repaymentPlans: [],
+  allocationPlans: [],
+  businessTrips: [],
+  meta: {},
+});
 
 /**
  * 数据仓库：内存缓存 + 三种持久化后端（IndexedDB / localStorage / 内存）
@@ -89,6 +105,8 @@ class Repo {
     const from = Number(this.data.meta['schemaVersion'] ?? 0);
     const to = runMigrations(this.data, from);
     await this.setMeta('schemaVersion', to || SCHEMA_VERSION);
+    // 页面专用 localStorage → 统一账号仓库。旧键只读复制，不删除；每个设备/域名各执行一次。
+    await this.adoptLegacyPlannerData(accountId);
     // 首次种子
     if (this.data.categories.length === 0) {
       this.data.categories = seedCategories();
@@ -134,7 +152,31 @@ class Repo {
   }
 
   private hasUserData(data: DBData): boolean {
-    return data.bills.length > 0 || data.categories.length > 0 || data.accounts.length > 0 || data.ledgers.length > 0 || data.recurringBills.length > 0;
+    return data.bills.length > 0
+      || data.categories.length > 0
+      || data.accounts.length > 0
+      || data.ledgers.length > 0
+      || data.recurringBills.length > 0
+      || data.repaymentPlans.length > 0
+      || data.allocationPlans.length > 0
+      || data.businessTrips.length > 0;
+  }
+
+  private async adoptLegacyPlannerData(accountId: string): Promise<void> {
+    const migrationKey = 'plannerLocalStorageMigrationV1';
+    if (this.data.meta[migrationKey]) return;
+    try {
+      const legacy = readLegacyPlannerData(accountId);
+      const local = this.fullDump().data;
+      const merged = mergeDumps(local, { ...local, ...legacy });
+      this.data.repaymentPlans = merged.repaymentPlans;
+      this.data.allocationPlans = merged.allocationPlans;
+      this.data.businessTrips = merged.businessTrips;
+      this.data.meta[migrationKey] = Date.now();
+      await this.persistAll();
+    } catch {
+      // 不标记完成，也不碰旧键；下次启动继续重试。
+    }
   }
 
   private async adoptLegacyData(accountId: string): Promise<void> {
@@ -441,6 +483,43 @@ class Repo {
     this.commit();
   }
 
+  // ---------- 规划功能（随 FullDump 进入云端保险库） ----------
+  async upsertRepaymentPlan(plan: RepaymentPlan): Promise<void> {
+    const i = this.data.repaymentPlans.findIndex((item) => item.id === plan.id);
+    if (i >= 0) this.data.repaymentPlans[i] = plan;
+    else this.data.repaymentPlans.push(plan);
+    await this.putStore('repaymentPlans', plan);
+    this.commit();
+  }
+
+  async deleteRepaymentPlan(id: string): Promise<void> {
+    const plan = this.data.repaymentPlans.find((item) => item.id === id);
+    if (!plan) return;
+    await this.upsertRepaymentPlan({ ...plan, deletedAt: Date.now(), updatedAt: Date.now() });
+  }
+
+  async upsertAllocationPlan(plan: MonthlyAllocationPlan): Promise<void> {
+    const i = this.data.allocationPlans.findIndex((item) => item.yearMonth === plan.yearMonth);
+    if (i >= 0) this.data.allocationPlans[i] = plan;
+    else this.data.allocationPlans.push(plan);
+    await this.putStore('allocationPlans', plan);
+    this.commit();
+  }
+
+  async upsertBusinessTrip(trip: BusinessTrip): Promise<void> {
+    const i = this.data.businessTrips.findIndex((item) => item.id === trip.id);
+    if (i >= 0) this.data.businessTrips[i] = trip;
+    else this.data.businessTrips.push(trip);
+    await this.putStore('businessTrips', trip);
+    this.commit();
+  }
+
+  async deleteBusinessTrip(id: string): Promise<void> {
+    const trip = this.data.businessTrips.find((item) => item.id === id);
+    if (!trip) return;
+    await this.upsertBusinessTrip({ ...trip, deletedAt: Date.now(), updatedAt: Date.now() });
+  }
+
   // ---------- 凭证照片（仅 IDB 模式；不参与备份/同步） ----------
   private get photoReady(): boolean {
     return this.mode === 'idb' && !!this.db;
@@ -565,6 +644,9 @@ class Repo {
         ledgers: this.data.ledgers,
         budgets: this.data.budgets,
         recurringBills: this.data.recurringBills,
+        repaymentPlans: this.data.repaymentPlans,
+        allocationPlans: this.data.allocationPlans,
+        businessTrips: this.data.businessTrips,
       },
     };
   }
@@ -578,6 +660,9 @@ class Repo {
     this.data.ledgers = next.ledgers.length ? next.ledgers : this.data.ledgers;
     this.data.budgets = next.budgets;
     this.data.recurringBills = next.recurringBills ?? [];
+    this.data.repaymentPlans = next.repaymentPlans ?? [];
+    this.data.allocationPlans = next.allocationPlans ?? [];
+    this.data.businessTrips = next.businessTrips ?? [];
     await this.persistAll(); // 内部已 commit()：广播 + 通知
   }
 }

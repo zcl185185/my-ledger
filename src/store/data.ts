@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { repo } from '../db/repo';
-import type { Account, Bill, Budget, Category, Ledger, RecurringBill, Tag } from '../types';
+import type { Account, Bill, Budget, BusinessTrip, Category, Ledger, MonthlyAllocationPlan, RecurringBill, RepaymentPlan, Tag } from '../types';
 import { uuid } from '../utils/compat';
 import type { StorageMode } from '../db/schema';
 import { refreshSyncUI, scheduleSync } from '../sync/manager';
@@ -18,6 +18,9 @@ interface DataState {
   ledgers: Ledger[];
   budgets: Budget[];
   recurringBills: RecurringBill[];
+  repaymentPlans: RepaymentPlan[];
+  allocationPlans: MonthlyAllocationPlan[];
+  businessTrips: BusinessTrip[];
   currentLedgerId: string;
   init: (accountId: string) => Promise<void>;
   deactivate: () => void;
@@ -36,6 +39,11 @@ interface DataState {
   setBudget: (yearMonth: string, cents: number | null) => Promise<void>;
   upsertRecurringBill: (item: RecurringBill) => Promise<void>;
   deleteRecurringBill: (id: string) => Promise<void>;
+  upsertRepaymentPlan: (plan: RepaymentPlan) => Promise<void>;
+  deleteRepaymentPlan: (id: string) => Promise<void>;
+  upsertAllocationPlan: (plan: MonthlyAllocationPlan) => Promise<void>;
+  upsertBusinessTrip: (trip: BusinessTrip) => Promise<void>;
+  deleteBusinessTrip: (id: string) => Promise<void>;
 }
 
 /** 集合上次快照：内容未变时复用旧数组引用，避免未变化的表触发订阅者重渲。
@@ -64,6 +72,9 @@ export const useData = create<DataState>((set, get) => ({
   ledgers: [],
   budgets: [],
   recurringBills: [],
+  repaymentPlans: [],
+  allocationPlans: [],
+  businessTrips: [],
   currentLedgerId: 'builtin-ledger',
 
   init: async (accountId) => {
@@ -93,6 +104,9 @@ export const useData = create<DataState>((set, get) => ({
       ledgers: [],
       budgets: [],
       recurringBills: [],
+      repaymentPlans: [],
+      allocationPlans: [],
+      businessTrips: [],
       currentLedgerId: 'builtin-ledger',
     });
   },
@@ -106,6 +120,9 @@ export const useData = create<DataState>((set, get) => ({
       ledgers: stableArray('ledgers', repo.data.ledgers),
       budgets: stableArray('budgets', repo.data.budgets),
       recurringBills: stableArray('recurringBills', repo.data.recurringBills),
+      repaymentPlans: stableArray('repaymentPlans', repo.data.repaymentPlans),
+      allocationPlans: stableArray('allocationPlans', repo.data.allocationPlans),
+      businessTrips: stableArray('businessTrips', repo.data.businessTrips),
       writeFailed: repo.writeFailed,
     }),
 
@@ -195,6 +212,31 @@ export const useData = create<DataState>((set, get) => ({
 
   deleteRecurringBill: async (id) => {
     await repo.deleteRecurringBill(id);
+    scheduleSync();
+  },
+
+  upsertRepaymentPlan: async (plan) => {
+    await repo.upsertRepaymentPlan(plan);
+    scheduleSync();
+  },
+
+  deleteRepaymentPlan: async (id) => {
+    await repo.deleteRepaymentPlan(id);
+    scheduleSync();
+  },
+
+  upsertAllocationPlan: async (plan) => {
+    await repo.upsertAllocationPlan(plan);
+    scheduleSync();
+  },
+
+  upsertBusinessTrip: async (trip) => {
+    await repo.upsertBusinessTrip(trip);
+    scheduleSync();
+  },
+
+  deleteBusinessTrip: async (id) => {
+    await repo.deleteBusinessTrip(id);
     scheduleSync();
   },
 }));

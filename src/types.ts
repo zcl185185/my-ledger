@@ -110,6 +110,86 @@ export interface RecurringBill {
   updatedAt: number;
 }
 
+/** 独立规划功能也进入账号数据仓库，随云端保险库跨设备同步。 */
+export interface RepaymentPlan {
+  id: string;
+  name: string;
+  dueDate: string;
+  amountCents: number;
+  note: string;
+  updatedAt: number;
+  paidAt?: number;
+  deletedAt?: number;
+}
+
+export type AllocationBucketKey = 'needs' | 'security' | 'growth' | 'flexible';
+export type AllocationExpenseType = 'fixed' | 'monthly';
+
+export interface AllocationExpense {
+  id: string;
+  bucket: AllocationBucketKey;
+  name: string;
+  amountCents: number;
+  type: AllocationExpenseType;
+  updatedAt: number;
+}
+
+export interface AllocationBucketDetail {
+  location: string;
+  description: string;
+}
+
+export type AllocationBucketDetails = Record<AllocationBucketKey, AllocationBucketDetail>;
+
+export interface MonthlyAllocationPlan {
+  yearMonth: string;
+  amountCents: number;
+  incomeType: string;
+  items: AllocationExpense[];
+  swept: { needs: number; growth: number; flexible: number };
+  bucketDetails?: AllocationBucketDetails;
+  savedAt: number;
+  deletedAt?: number;
+}
+
+export type TripStatus = 'active' | 'completed';
+export type TripExpenseCategory = 'taxi' | 'lodging' | 'meal' | 'transport' | 'other';
+export type TripPaymentSource = 'company' | 'allowance' | 'self';
+export type TripClaimStatus = 'unsubmitted' | 'submitted' | 'paid';
+export type TripInvoiceStatus = 'not_required' | 'pending' | 'ready';
+
+export interface TripExpense {
+  id: string;
+  date: string;
+  category: TripExpenseCategory;
+  amountCents: number;
+  units: number;
+  paymentSource: TripPaymentSource;
+  claimStatus: TripClaimStatus;
+  invoiceStatus: TripInvoiceStatus;
+  note: string;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface BusinessTrip {
+  id: string;
+  title: string;
+  location: string;
+  startDate: string;
+  endDate: string;
+  travelDays: number;
+  salaryDays: number;
+  lodgingNights: number;
+  dailySalaryCents: number;
+  dailyAllowanceCents: number;
+  lodgingLimitCents: number;
+  status: TripStatus;
+  expenses: TripExpense[];
+  updatedAt: number;
+  deletedAt?: number;
+}
+
 export interface FullDump {
   meta: { schemaVersion: number; exportedAt: number; appVersion: string };
   data: {
@@ -120,6 +200,9 @@ export interface FullDump {
     ledgers: Ledger[];
     budgets: Budget[];
     recurringBills: RecurringBill[];
+    repaymentPlans: RepaymentPlan[];
+    allocationPlans: MonthlyAllocationPlan[];
+    businessTrips: BusinessTrip[];
   };
 }
 

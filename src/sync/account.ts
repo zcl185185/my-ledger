@@ -172,6 +172,13 @@ export interface VaultSyncResult {
   pulled: boolean; // 云端是否有快照被合并/采用
   pushed: boolean;
   billCount: number;
+  plannerCount: number;
+}
+
+function plannerCountOf(data: FullDump['data']): number {
+  return data.repaymentPlans.filter((item) => !item.deletedAt).length
+    + data.allocationPlans.filter((item) => !item.deletedAt).length
+    + data.businessTrips.filter((item) => !item.deletedAt).length;
 }
 
 let vaultSyncing = false;
@@ -192,7 +199,7 @@ export async function syncVault(): Promise<VaultSyncResult> {
   if (!startedAccountId) throw new Error('本地账号尚未加载');
   if (vaultSyncing) {
     vaultPending = true;
-    return { pulled: false, pushed: false, billCount: 0 };
+    return { pulled: false, pushed: false, billCount: 0, plannerCount: 0 };
   }
   vaultSyncing = true;
   try {
@@ -234,7 +241,7 @@ async function doVaultSync(): Promise<VaultSyncResult> {
   if (!row) {
     // 2a) 云端为空：直接首推本地
     await pushVault(sb, accountId, local);
-    return { pulled: false, pushed: true, billCount: local.data.bills.length };
+    return { pulled: false, pushed: true, billCount: local.data.bills.length, plannerCount: plannerCountOf(local.data) };
   }
 
   // 2b) 云端有快照：解析 → （解密）→ 校验
@@ -264,7 +271,15 @@ async function doVaultSync(): Promise<VaultSyncResult> {
   //    否则按 id 并集、同 id 取 updatedAt 大者合并，两端数据都不丢
   let mergedData: FullDump['data'];
   if (local.data.bills.length === 0) {
-    mergedData = cloudData;
+    // 主账本为空时沿用云端核心数据，避免本机种子项重复；但仍需合并本机刚从
+    // 旧 localStorage 迁入的规划数据，否则新设备首次同步会把它们丢掉。
+    const withLocalPlanners = mergeDumps(local.data, cloudData);
+    mergedData = {
+      ...cloudData,
+      repaymentPlans: withLocalPlanners.repaymentPlans,
+      allocationPlans: withLocalPlanners.allocationPlans,
+      businessTrips: withLocalPlanners.businessTrips,
+    };
   } else {
     mergedData = mergeDumps(local.data, cloudData);
   }
@@ -277,7 +292,12 @@ async function doVaultSync(): Promise<VaultSyncResult> {
   const mergedDump = repo.fullDump();
   if (repo.activeAccountId !== accountId) throw new Error('账号已切换，本次同步已取消');
   await pushVault(sb, accountId, mergedDump);
-  return { pulled: true, pushed: true, billCount: mergedDump.data.bills.length };
+  return {
+    pulled: true,
+    pushed: true,
+    billCount: mergedDump.data.bills.length,
+    plannerCount: plannerCountOf(mergedDump.data),
+  };
 }
 
 async function pushVault(sb: SupabaseClient, userId: string, dump: FullDump): Promise<void> {

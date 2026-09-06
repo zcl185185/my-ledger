@@ -5,35 +5,22 @@ import { PageCloseCapsule } from '../components/PageCloseCapsule';
 import { Sheet } from '../components/Sheet';
 import { useData } from '../store/data';
 import { useUI } from '../store/ui';
+import type {
+  AllocationBucketDetail as BucketDetail,
+  AllocationBucketDetails as BucketDetails,
+  AllocationBucketKey as BucketKey,
+  AllocationExpense as PlannedExpense,
+  AllocationExpenseType as ExpenseType,
+  MonthlyAllocationPlan,
+} from '../types';
 import { uuid } from '../utils/compat';
 import { parseYuanToCents, toYuan, toYuanTrim } from '../utils/money';
-
-type BucketKey = 'needs' | 'security' | 'growth' | 'flexible';
-type ExpenseType = 'fixed' | 'monthly';
 
 type BucketDefinition = {
   key: BucketKey;
   name: string;
   ratio: number;
   description: string;
-};
-
-type PlannedExpense = {
-  id: string;
-  bucket: BucketKey;
-  name: string;
-  amountCents: number;
-  type: ExpenseType;
-  updatedAt: number;
-};
-
-type MonthlyAllocationPlan = {
-  yearMonth: string;
-  amountCents: number;
-  incomeType: string;
-  items: PlannedExpense[];
-  swept: { needs: number; growth: number; flexible: number };
-  savedAt: number;
 };
 
 const BUCKETS: BucketDefinition[] = [
@@ -44,6 +31,19 @@ const BUCKETS: BucketDefinition[] = [
 ];
 
 const EMPTY_SWEPT = { needs: 0, growth: 0, flexible: 0 };
+
+function defaultBucketDetails(): BucketDetails {
+  return {
+    needs: { location: '微信', description: '房租、水电、吃饭、交通和日常开销' },
+    security: { location: '中国银行 9207', description: '生活保障、应急资金和盈余储蓄' },
+    growth: { location: '', description: '技能学习、试错资金和长期投资' },
+    flexible: { location: '', description: '娱乐、自由消费和突发消费' },
+  };
+}
+
+function bucketDetail(plan: MonthlyAllocationPlan, key: BucketKey): BucketDetail {
+  return plan.bucketDetails?.[key] ?? defaultBucketDetails()[key];
+}
 
 function monthOffset(yearMonth: string, delta: number) {
   const year = Number(yearMonth.slice(0, 4));
@@ -59,60 +59,6 @@ function allocateCents(totalCents: number): Record<BucketKey, number> {
   return { needs, security, growth, flexible: totalCents - needs - security - growth };
 }
 
-function isExpense(value: unknown): value is PlannedExpense {
-  if (!value || typeof value !== 'object') return false;
-  const item = value as Partial<PlannedExpense>;
-  return typeof item.id === 'string'
-    && BUCKETS.some((bucket) => bucket.key === item.bucket)
-    && typeof item.name === 'string'
-    && Number.isInteger(item.amountCents)
-    && Number(item.amountCents) > 0
-    && (item.type === 'fixed' || item.type === 'monthly')
-    && typeof item.updatedAt === 'number';
-}
-
-function isMonthlyPlan(value: unknown): value is MonthlyAllocationPlan {
-  if (!value || typeof value !== 'object') return false;
-  const plan = value as Partial<MonthlyAllocationPlan>;
-  return typeof plan.yearMonth === 'string'
-    && /^\d{4}-\d{2}$/.test(plan.yearMonth)
-    && Number.isInteger(plan.amountCents)
-    && Number(plan.amountCents) >= 0
-    && typeof plan.incomeType === 'string'
-    && Array.isArray(plan.items)
-    && plan.items.every(isExpense)
-    && Boolean(plan.swept)
-    && Number.isInteger(plan.swept?.needs)
-    && Number.isInteger(plan.swept?.growth)
-    && Number.isInteger(plan.swept?.flexible)
-    && typeof plan.savedAt === 'number';
-}
-
-function readPlans(key: string, legacyKey: string, currentYearMonth: string): MonthlyAllocationPlan[] {
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw) {
-      const parsed = JSON.parse(raw) as unknown;
-      if (Array.isArray(parsed) && parsed.every(isMonthlyPlan)) return parsed;
-    }
-
-    const legacyRaw = localStorage.getItem(legacyKey);
-    if (!legacyRaw) return [];
-    const legacy = JSON.parse(legacyRaw) as { amountCents?: number; incomeType?: string; savedAt?: number };
-    if (!Number.isInteger(legacy.amountCents) || Number(legacy.amountCents) <= 0) return [];
-    return [{
-      yearMonth: currentYearMonth,
-      amountCents: Number(legacy.amountCents),
-      incomeType: typeof legacy.incomeType === 'string' ? legacy.incomeType : '工资收入',
-      items: [],
-      swept: { ...EMPTY_SWEPT },
-      savedAt: typeof legacy.savedAt === 'number' ? legacy.savedAt : Date.now(),
-    }];
-  } catch {
-    return [];
-  }
-}
-
 function createDraft(yearMonth: string, plans: MonthlyAllocationPlan[]): MonthlyAllocationPlan {
   const previous = [...plans]
     .filter((plan) => plan.yearMonth < yearMonth)
@@ -120,19 +66,27 @@ function createDraft(yearMonth: string, plans: MonthlyAllocationPlan[]): Monthly
   const fixedItems = (previous?.items ?? [])
     .filter((item) => item.type === 'fixed')
     .map((item) => ({ ...item, id: uuid(), updatedAt: Date.now() }));
+  const previousDetails = previous
+    ? BUCKETS.reduce<BucketDetails>((result, bucket) => {
+      result[bucket.key] = { ...bucketDetail(previous, bucket.key) };
+      return result;
+    }, defaultBucketDetails())
+    : defaultBucketDetails();
   return {
     yearMonth,
     amountCents: 0,
     incomeType: previous?.incomeType ?? '工资收入',
     items: fixedItems,
     swept: { ...EMPTY_SWEPT },
+    bucketDetails: previousDetails,
     savedAt: 0,
   };
 }
 
 export function Allocation6211Page() {
   const navigate = useNavigate();
-  const accountId = useData((s) => s.accountId);
+  const storedPlans = useData((s) => s.allocationPlans);
+  const upsertAllocationPlan = useData((s) => s.upsertAllocationPlan);
   const toast = useUI((s) => s.toast);
   const confirm = useUI((s) => s.confirm);
   const currentYearMonth = useMemo(() => {
@@ -140,11 +94,8 @@ export function Allocation6211Page() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   }, []);
 
-  const storageKey = `ledger:allocation-6211-v2:${accountId ?? 'local'}`;
-  const legacyStorageKey = `ledger:allocation-6211:${accountId ?? 'local'}`;
   const [yearMonth, setYearMonth] = useState(currentYearMonth);
-  const [plans, setPlans] = useState<MonthlyAllocationPlan[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const plans = useMemo(() => storedPlans.filter((plan) => !plan.deletedAt), [storedPlans]);
   const [draft, setDraft] = useState<MonthlyAllocationPlan>(() => createDraft(currentYearMonth, []));
   const [amount, setAmount] = useState('');
   const [incomeType, setIncomeType] = useState('工资收入');
@@ -155,15 +106,10 @@ export function Allocation6211Page() {
   const [itemName, setItemName] = useState('');
   const [itemAmount, setItemAmount] = useState('');
   const [itemType, setItemType] = useState<ExpenseType>('fixed');
+  const [locationInput, setLocationInput] = useState('');
+  const [descriptionInput, setDescriptionInput] = useState('');
 
   useEffect(() => {
-    setLoaded(false);
-    setPlans(readPlans(storageKey, legacyStorageKey, currentYearMonth));
-    setLoaded(true);
-  }, [currentYearMonth, legacyStorageKey, storageKey]);
-
-  useEffect(() => {
-    if (!loaded) return;
     const saved = plans.find((plan) => plan.yearMonth === yearMonth);
     const next = saved ?? createDraft(yearMonth, plans);
     setDraft(next);
@@ -172,16 +118,7 @@ export function Allocation6211Page() {
     setError('');
     setActiveBucket(null);
     setItemEditorOpen(false);
-  }, [loaded, yearMonth]);
-
-  useEffect(() => {
-    if (!loaded) return;
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(plans));
-    } catch {
-      toast('6211 规划保存失败，请检查浏览器存储空间', 'err');
-    }
-  }, [loaded, plans, storageKey, toast]);
+  }, [plans, yearMonth]);
 
   const baseAllocations = useMemo(() => allocateCents(draft.amountCents), [draft.amountCents]);
   const sweptTotal = draft.swept.needs + draft.swept.growth + draft.swept.flexible;
@@ -205,10 +142,7 @@ export function Allocation6211Page() {
 
   const commit = (next: MonthlyAllocationPlan) => {
     setDraft(next);
-    setPlans((current) => {
-      const exists = current.some((plan) => plan.yearMonth === next.yearMonth);
-      return exists ? current.map((plan) => plan.yearMonth === next.yearMonth ? next : plan) : [...current, next];
-    });
+    void upsertAllocationPlan(next);
   };
 
   const inputCents = () => {
@@ -243,8 +177,22 @@ export function Allocation6211Page() {
   };
 
   const openBucket = (key: BucketKey) => {
+    const detail = bucketDetail(draft, key);
     setActiveBucket(key);
+    setLocationInput(detail.location);
+    setDescriptionInput(detail.description);
     setItemEditorOpen(false);
+  };
+
+  const saveBucketDetail = () => {
+    if (!activeBucket) return;
+    const details = BUCKETS.reduce<BucketDetails>((result, bucket) => {
+      result[bucket.key] = { ...bucketDetail(draft, bucket.key) };
+      return result;
+    }, defaultBucketDetails());
+    details[activeBucket] = { location: locationInput.trim(), description: descriptionInput.trim() };
+    commit({ ...draft, bucketDetails: details, savedAt: Date.now() });
+    toast('分区信息已保存');
   };
 
   const openAddItem = () => {
@@ -361,12 +309,14 @@ export function Allocation6211Page() {
             {BUCKETS.map((bucket) => {
               const remaining = remainingByBucket[bucket.key];
               const fixedCount = draft.items.filter((item) => item.bucket === bucket.key && item.type === 'fixed').length;
+              const detail = bucketDetail(draft, bucket.key);
               return (
                 <button key={bucket.key} className="w-full min-h-[78px] py-3 flex items-center gap-3 text-left" onClick={() => openBucket(bucket.key)}>
                   <span className="w-10 h-10 shrink-0 rounded-xl bg-fill text-primary flex items-center justify-center text-xs font-semibold">{bucket.ratio}%</span>
                   <span className="flex-1 min-w-0">
                     <strong className="block text-sm font-medium">{bucket.name}</strong>
-                    <small className="block text-xs text-ink-3 mt-0.5 truncate">已规划 ¥ {toYuan(plannedByBucket[bucket.key])}{fixedCount ? ` · 固定 ${fixedCount} 项` : ''}</small>
+                    <small className="block text-xs text-ink-3 mt-0.5 truncate">存放：{detail.location || '未设置'}</small>
+                    <small className="block text-[10px] text-ink-3 mt-0.5 truncate">已规划 ¥ {toYuan(plannedByBucket[bucket.key])}{fixedCount ? ` · 固定 ${fixedCount} 项` : ''}</small>
                   </span>
                   <span className="shrink-0 text-right">
                     <strong className={`block text-sm ${remaining < 0 ? 'text-danger' : ''}`}>¥ {toYuan(remaining)}</strong>
@@ -414,7 +364,11 @@ export function Allocation6211Page() {
                 <div><span className="block text-[10px] text-ink-3">已规划</span><strong className="block text-sm mt-1">¥ {toYuan(plannedByBucket[activeBucket])}</strong></div>
                 <div><span className="block text-[10px] text-ink-3">剩余</span><strong className={`block text-sm mt-1 ${remainingByBucket[activeBucket] < 0 ? 'text-danger' : ''}`}>¥ {toYuan(remainingByBucket[activeBucket])}</strong></div>
               </div>
-              <p className="text-xs text-ink-3 mb-2">{activeDefinition.description}</p>
+              <section className="rounded-2xl bg-fill p-3 mb-4">
+                <label className="block"><span className="block text-[11px] text-ink-3 mb-1">资金存放位置</span><input value={locationInput} onChange={(event) => setLocationInput(event.target.value)} maxLength={30} placeholder="例如：微信、中国银行 9207" className="field-input" /></label>
+                <label className="block mt-3"><span className="block text-[11px] text-ink-3 mb-1">用途说明</span><input value={descriptionInput} onChange={(event) => setDescriptionInput(event.target.value)} maxLength={60} placeholder={activeDefinition.description} className="field-input" /></label>
+                <button className="w-full h-10 mt-3 rounded-xl bg-card text-sm font-medium" onClick={saveBucketDetail}>保存分区信息</button>
+              </section>
               <div className="divide-y divide-line">
                 {activeItems.length === 0 ? <p className="py-7 text-center text-sm text-ink-3">还没有规划开销</p> : activeItems.map((item) => (
                   <button key={item.id} className="w-full min-h-[62px] py-3 flex items-center gap-3 text-left" onClick={() => openEditItem(item)}>

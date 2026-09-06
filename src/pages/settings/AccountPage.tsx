@@ -142,7 +142,9 @@ export function AccountPage() {
         const r = await syncVault();
         setLastSync(lastVaultSyncAt());
         setLastErr(null);
-        toast(r.pulled ? `已合并云端数据（共 ${r.billCount} 笔账单）` : '本地数据已备份到云端');
+        toast(r.pulled
+          ? `已合并云端数据（${r.billCount} 笔账单、${r.plannerCount} 项规划）`
+          : `本地数据已备份到云端（${r.plannerCount} 项规划）`);
       } catch (e) {
         const msg = e instanceof Error ? e.message : '同步失败';
         setLastErr(msg);
@@ -281,7 +283,7 @@ export function AccountPage() {
               <CloudUpload size={16} className="text-ink-2" /> 云端保险库
             </h2>
             <p className="text-xs text-ink-3 leading-relaxed">
-              同步 = 拉取云端 → 与本机按记账时间合并 → 推回，两端数据都不会被覆盖丢失。账单在上传前用下方口令加密（AES-GCM），云端只存密文。
+              同步 = 拉取云端 → 与本机按更新时间合并 → 推回，账单、还款、6211 和出差记录都会同步。数据在上传前用下方口令加密（AES-GCM），云端只存密文。
             </p>
             <label className="block">
               <span className="text-xs text-ink-3 mb-1 block">数据口令（加密云端快照；仅保存在本设备，换设备登录后需重新输入）</span>

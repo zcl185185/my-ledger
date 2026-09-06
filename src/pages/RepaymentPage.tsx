@@ -1,91 +1,28 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { PageCloseCapsule } from '../components/PageCloseCapsule';
 import { Sheet } from '../components/Sheet';
 import { useData } from '../store/data';
 import { useUI } from '../store/ui';
+import type { RepaymentPlan } from '../types';
 import { uuid } from '../utils/compat';
 import { parseYuanToCents, toYuan, toYuanTrim } from '../utils/money';
-
-type RepaymentPlan = {
-  id: string;
-  name: string;
-  dueDate: string;
-  amountCents: number;
-  note: string;
-  updatedAt: number;
-  paidAt?: number;
-};
-
-const DEFAULT_PLANS: RepaymentPlan[] = [
-  { id: 'default-weiliu', name: '微榴本期应还', dueDate: '2026-09-03', amountCents: 56_728, note: '', updatedAt: 0 },
-  { id: 'default-douyin', name: '抖音本期应还', dueDate: '2026-09-03', amountCents: 677_593, note: '', updatedAt: 0 },
-  { id: 'default-meituan', name: '美团本期应还', dueDate: '2026-09-04', amountCents: 73_685, note: '', updatedAt: 0 },
-  { id: 'default-xiecheng', name: '携程本期应还', dueDate: '2026-09-06', amountCents: 33_090, note: '', updatedAt: 0 },
-  { id: 'default-jd', name: '京东本期应还', dueDate: '2026-09-08', amountCents: 28_325, note: '', updatedAt: 0 },
-  { id: 'default-eleme', name: '饿了么本期应还', dueDate: '2026-09-28', amountCents: 136_864, note: '', updatedAt: 0 },
-];
 
 function offsetMonth(year: number, month: number, delta: number) {
   const next = new Date(year, month - 1 + delta, 1);
   return { year: next.getFullYear(), month: next.getMonth() + 1 };
 }
 
-function isRepaymentPlan(value: unknown): value is RepaymentPlan {
-  if (!value || typeof value !== 'object') return false;
-  const plan = value as Partial<RepaymentPlan>;
-  return typeof plan.id === 'string'
-    && typeof plan.name === 'string'
-    && typeof plan.dueDate === 'string'
-    && /^\d{4}-\d{2}-\d{2}$/.test(plan.dueDate)
-    && Number.isInteger(plan.amountCents)
-    && Number(plan.amountCents) > 0
-    && typeof plan.note === 'string'
-    && typeof plan.updatedAt === 'number'
-    && (plan.paidAt === undefined || typeof plan.paidAt === 'number');
-}
-
-function readPlans(key: string, legacyKey: string, fallbackYearMonth: string): RepaymentPlan[] {
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw) {
-      const parsed = JSON.parse(raw) as unknown;
-      return Array.isArray(parsed) && parsed.every(isRepaymentPlan) ? parsed : DEFAULT_PLANS;
-    }
-
-    const legacyRaw = localStorage.getItem(legacyKey);
-    if (!legacyRaw) return DEFAULT_PLANS;
-    const legacy = JSON.parse(legacyRaw) as Array<Partial<RepaymentPlan> & { dayOfMonth?: number }>;
-    if (!Array.isArray(legacy)) return DEFAULT_PLANS;
-    const monthDays = new Date(Number(fallbackYearMonth.slice(0, 4)), Number(fallbackYearMonth.slice(5, 7)), 0).getDate();
-    const migrated = legacy.flatMap((item) => {
-      if (typeof item.id !== 'string' || typeof item.name !== 'string' || !Number.isInteger(item.dayOfMonth) || !Number.isInteger(item.amountCents)) return [];
-      const day = Math.min(Math.max(Number(item.dayOfMonth), 1), monthDays);
-      return [{
-        id: item.id,
-        name: item.name,
-        dueDate: `${fallbackYearMonth}-${String(day).padStart(2, '0')}`,
-        amountCents: Number(item.amountCents),
-        note: typeof item.note === 'string' ? item.note : '',
-        updatedAt: typeof item.updatedAt === 'number' ? item.updatedAt : Date.now(),
-      }];
-    });
-    return migrated.length ? migrated : DEFAULT_PLANS;
-  } catch {
-    return DEFAULT_PLANS;
-  }
-}
-
 export function RepaymentPage() {
   const navigate = useNavigate();
-  const accountId = useData((s) => s.accountId);
+  const storedPlans = useData((s) => s.repaymentPlans);
+  const upsertRepaymentPlan = useData((s) => s.upsertRepaymentPlan);
+  const deleteRepaymentPlan = useData((s) => s.deleteRepaymentPlan);
   const toast = useUI((s) => s.toast);
   const confirm = useUI((s) => s.confirm);
   const now = useMemo(() => new Date(), []);
   const [period, setPeriod] = useState({ year: now.getFullYear(), month: now.getMonth() + 1 });
-  const [plans, setPlans] = useState<RepaymentPlan[]>([]);
-  const [loaded, setLoaded] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -94,24 +31,7 @@ export function RepaymentPage() {
   const [note, setNote] = useState('');
 
   const yearMonth = `${period.year}-${String(period.month).padStart(2, '0')}`;
-  const storageKey = `ledger:repayment-plans-v2:${accountId ?? 'local'}`;
-  const legacyStorageKey = `ledger:repayment-rules:${accountId ?? 'local'}`;
-  const initialYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-
-  useEffect(() => {
-    setLoaded(false);
-    setPlans(readPlans(storageKey, legacyStorageKey, initialYearMonth));
-    setLoaded(true);
-  }, [initialYearMonth, legacyStorageKey, storageKey]);
-
-  useEffect(() => {
-    if (!loaded) return;
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(plans));
-    } catch {
-      toast('还款提醒保存失败，请检查浏览器存储空间', 'err');
-    }
-  }, [loaded, plans, storageKey, toast]);
+  const plans = useMemo(() => storedPlans.filter((plan) => !plan.deletedAt), [storedPlans]);
 
   const events = useMemo(() => plans
     .filter((plan) => plan.dueDate.startsWith(`${yearMonth}-`))
@@ -140,7 +60,7 @@ export function RepaymentPage() {
     setEditorOpen(true);
   };
 
-  const savePlan = () => {
+  const savePlan = async () => {
     const normalizedName = name.trim();
     const amountCents = parseYuanToCents(amount);
     if (!normalizedName) return toast('请输入还款名称', 'err');
@@ -149,12 +69,12 @@ export function RepaymentPage() {
 
     const updatedAt = Date.now();
     if (editingId) {
-      setPlans((current) => current.map((plan) => plan.id === editingId
-        ? { ...plan, name: normalizedName, dueDate, amountCents, note: note.trim(), updatedAt }
-        : plan));
+      const current = plans.find((plan) => plan.id === editingId);
+      if (!current) return;
+      await upsertRepaymentPlan({ ...current, name: normalizedName, dueDate, amountCents, note: note.trim(), updatedAt });
       toast('还款计划已更新');
     } else {
-      setPlans((current) => [...current, { id: uuid(), name: normalizedName, dueDate, amountCents, note: note.trim(), updatedAt }]);
+      await upsertRepaymentPlan({ id: uuid(), name: normalizedName, dueDate, amountCents, note: note.trim(), updatedAt });
       toast('还款计划已添加');
     }
     const savedDate = new Date(`${dueDate}T00:00:00`);
@@ -168,15 +88,15 @@ export function RepaymentPage() {
     if (!plan) return;
     const ok = await confirm({ title: `删除「${plan.name}」？`, message: '只会删除这个月份的这条还款计划，不影响账单和账户余额。', confirmText: '删除', danger: true });
     if (!ok) return;
-    setPlans((current) => current.filter((item) => item.id !== editingId));
+    await deleteRepaymentPlan(editingId);
     setEditorOpen(false);
     toast('还款计划已删除', 'info');
   };
 
-  const setPaid = (id: string, paid: boolean) => {
-    setPlans((current) => current.map((plan) => plan.id === id
-      ? { ...plan, paidAt: paid ? Date.now() : undefined, updatedAt: Date.now() }
-      : plan));
+  const setPaid = async (id: string, paid: boolean) => {
+    const plan = plans.find((item) => item.id === id);
+    if (!plan) return;
+    await upsertRepaymentPlan({ ...plan, paidAt: paid ? Date.now() : undefined, updatedAt: Date.now() });
     toast(paid ? '已确认还款' : '已撤销还款确认', 'info');
   };
 
@@ -276,7 +196,7 @@ export function RepaymentPage() {
             <span className="block text-xs text-ink-3 mb-1.5">备注（可选）</span>
             <div className="h-12 rounded-xl bg-fill px-3 flex items-center"><input value={note} onChange={(event) => setNote(event.target.value)} maxLength={40} placeholder="例如：自动扣款银行卡" className="field-input" /></div>
           </label>
-          <button className="w-full h-11 rounded-xl bg-primary text-on-primary font-medium" onClick={savePlan}>保存</button>
+          <button className="w-full h-11 rounded-xl bg-primary text-on-primary font-medium" onClick={() => void savePlan()}>保存</button>
           {editingId && (
             <button className="w-full h-11 text-danger flex items-center justify-center gap-1" onClick={() => void deletePlan()}><Trash2 size={17} />删除这条计划</button>
           )}

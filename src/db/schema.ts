@@ -1,6 +1,6 @@
 import { deleteDB, openDB, type IDBPDatabase } from 'idb';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 export const DB_NAME = 'shark-ledger';
 
 export type StorageMode = 'idb' | 'local' | 'memory';
@@ -51,6 +51,9 @@ export async function openLedgerDB(accountId?: string): Promise<IDBPDatabase> {
       if (!db.objectStoreNames.contains('ledgers')) db.createObjectStore('ledgers', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('budgets')) db.createObjectStore('budgets', { keyPath: 'yearMonth' });
       if (!db.objectStoreNames.contains('recurringBills')) db.createObjectStore('recurringBills', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('repaymentPlans')) db.createObjectStore('repaymentPlans', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('allocationPlans')) db.createObjectStore('allocationPlans', { keyPath: 'yearMonth' });
+      if (!db.objectStoreNames.contains('businessTrips')) db.createObjectStore('businessTrips', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
       // v2：账单凭证照片（Blob 本地存储，不参与备份/同步）
       if (!db.objectStoreNames.contains('photos')) {
@@ -80,6 +83,15 @@ export const MIGRATIONS: { to: number; run: (data: unknown) => void }[] = [
     run(data) {
       const d = data as { recurringBills?: unknown[] };
       if (!Array.isArray(d.recurringBills)) d.recurringBills = [];
+    },
+  },
+  {
+    to: 5,
+    run(data) {
+      const d = data as { repaymentPlans?: unknown[]; allocationPlans?: unknown[]; businessTrips?: unknown[] };
+      if (!Array.isArray(d.repaymentPlans)) d.repaymentPlans = [];
+      if (!Array.isArray(d.allocationPlans)) d.allocationPlans = [];
+      if (!Array.isArray(d.businessTrips)) d.businessTrips = [];
     },
   },
 ];

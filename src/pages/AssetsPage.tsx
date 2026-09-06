@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import {
   BadgeDollarSign,
+  Briefcase,
   CalendarClock,
   ChartPie,
   ChevronRight,
@@ -192,6 +193,7 @@ export function AssetsPage() {
           <div className="grid grid-cols-4 gap-x-2 gap-y-3">
             <FeatureButton icon={<CalendarClock size={20} />} label="还款时间轴" onClick={() => navigate('/repayment')} emphasis />
             <FeatureButton icon={<ChartPie size={20} />} label="6211 财务" onClick={() => navigate('/allocation-6211')} />
+            <FeatureButton icon={<Briefcase size={20} />} label="出差记录" onClick={() => navigate('/business-trip')} />
             <FeatureButton icon={<Repeat2 size={20} />} label="周期记账" onClick={() => navigate('/settings/recurring')} />
             <FeatureButton icon={<Tags size={20} />} label="分类管理" onClick={() => navigate('/settings/categories')} />
             <FeatureButton icon={<DatabaseBackup size={20} />} label="数据备份" onClick={() => navigate('/settings/backup')} />
