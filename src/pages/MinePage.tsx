@@ -81,10 +81,19 @@ export function MinePage() {
                 <Camera size={11} />
               </span>
             </button>
-            <div>
-              <span className="text-xl font-bold">{nickname}</span>
-              {localOnly && <p className="mt-1 text-[11px] text-header-ink/70">仅本机保存 · 不上传云端</p>}
-            </div>
+            <button
+              className="flex min-w-0 flex-1 items-center justify-between gap-2 py-2 text-left"
+              aria-label={localOnly ? '打开仅本地存储' : '打开账号与云同步'}
+              onClick={() => navigate('/settings/account')}
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-xl font-bold">{nickname}</span>
+                <span className="mt-1 block text-[11px] text-header-ink/70">
+                  {localOnly ? '仅本机保存 · 点击切换模式' : '云端账号 · 点击管理'}
+                </span>
+              </span>
+              <ChevronRight size={18} className="shrink-0 opacity-60" />
+            </button>
           </div>
           <div className="grid grid-cols-2 text-center mt-6">
             <span>
